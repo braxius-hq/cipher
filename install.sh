@@ -25,9 +25,9 @@ fi
 
 REPO="braxius-hq/cipher"
 BINARY_PATTERN="cipher-.*-linux-${DL_ARCH}.gz"
-INSTALL_DIR="/usr/local/bin"
+INSTALL_DIR="${HOME}/.local/bin"
 
-echo "Installing latest release..."
+echo "Installing latest release (~40 MB)..."
 LATEST_URL=$(curl -s https://api.github.com/repos/$REPO/releases/latest | grep "browser_download_url" | grep -E "$BINARY_PATTERN" | cut -d '"' -f 4 | head -n 1)
 
 if [ -z "$LATEST_URL" ]; then
@@ -35,13 +35,25 @@ if [ -z "$LATEST_URL" ]; then
     exit 1
 fi
 
-curl -sL -o cipher.gz "$LATEST_URL"
+curl -#L -o cipher.gz "$LATEST_URL"
 gunzip cipher.gz
 
 chmod +x cipher
-echo "Copying to $INSTALL_DIR (requires sudo)..."
-sudo mv cipher "$INSTALL_DIR/cipher"
+mkdir -p "$INSTALL_DIR"
+mv cipher "$INSTALL_DIR/cipher"
 
 echo ""
-echo "✅ Cipher installed."
+echo "✅ Cipher installed to $INSTALL_DIR/cipher."
+
+if ! echo "$PATH" | tr ':' '\n' | grep -qFx "$INSTALL_DIR"; then
+    echo ""
+    echo "⚠️  $INSTALL_DIR is not in your PATH."
+    echo "   Add this to your shell config (~/.bashrc or ~/.zshrc):"
+    echo ""
+    echo "   export PATH=\"\$HOME/.local/bin:\$PATH\""
+    echo ""
+    echo "   Then restart your terminal or run: source ~/.bashrc"
+fi
+
+echo ""
 echo "Run 'cipher' to get started."
