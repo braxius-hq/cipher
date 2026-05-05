@@ -36,8 +36,8 @@ if [ -z "$LATEST_URL" ]; then
 fi
 
 curl -#L -o cipher.gz "$LATEST_URL"
-rm -f cipher
-gunzip cipher.gz
+gunzip -c cipher.gz > cipher
+rm -f cipher.gz
 
 chmod +x cipher
 mkdir -p "$INSTALL_DIR"
