@@ -1,0 +1,12 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+export const COLORS = {
+	ACCENT: "#8B5CF6",
+	ACCENT_BG: "#6D28D9",
+	ACCENT_TEXT: "#FFFFFF",
+	SUCCESS: "#10B981",
+	ERROR: "#EF4444",
+	WARNING: "#F59E0B",
+	BORDER: "#374151",
+	TEXT_PRIMARY: "#F9FAFB",
+	TEXT_SECONDARY: "#9CA3AF",
+} as const;
