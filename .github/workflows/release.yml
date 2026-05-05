@@ -29,18 +29,16 @@ jobs:
       - name: Build Linux (amd64)
         run: |
           bun build --compile --minify --sourcemap --target=bun-linux-x64-modern --define 'process.env.APP_VERSION="${{ env.APP_VERSION }}"' index.tsx --outfile cipher-${{ github.ref_name }}-linux-amd64
-          gzip -9 cipher-${{ github.ref_name }}-linux-amd64
 
       - name: Build Linux (arm64)
         run: |
           bun build --compile --minify --sourcemap --target=bun-linux-arm64 --define 'process.env.APP_VERSION="${{ env.APP_VERSION }}"' index.tsx --outfile cipher-${{ github.ref_name }}-linux-arm64
-          gzip -9 cipher-${{ github.ref_name }}-linux-arm64
 
       - name: Release
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: |
-            cipher-${{ github.ref_name }}-linux-amd64.gz
-            cipher-${{ github.ref_name }}-linux-arm64.gz
+            cipher-${{ github.ref_name }}-linux-amd64
+            cipher-${{ github.ref_name }}-linux-arm64
           generate_release_notes: true

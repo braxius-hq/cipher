@@ -5,7 +5,7 @@ An end-to-end encrypted (E2EE) cloud storage client.
 Cipher is a fully-featured, interactive terminal file manager built with [Ink](https://github.com/vadimdemedes/ink) and [Bun](https://bun.sh). It provides a secure way to manage your files entirely from the command line.
 
 ![License](https://img.shields.io/badge/License-AGPL_3.0-blue.svg)
-![Version](https://img.shields.io/github/package-json/v/braxius-hq/cipher)
+![Version](https://img.shields.io/github/v/release/braxius-hq/cipher)
 
 ## Security Model: Zero-Knowledge Encryption
 Cipher implements strict end-to-end encryption. Your data is encrypted locally on your machine before it is ever sent to the network.
