@@ -2,7 +2,6 @@
 
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, stat } from "node:fs/promises";
-import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import type { MutableRefObject } from "react";
 import { useRef, useState } from "react";
@@ -12,6 +11,7 @@ import {
 	secureUnlink,
 	unregisterSensitivePath,
 } from "../../lib/cleanup";
+import { getDownloadDir } from "../../lib/config";
 import * as api from "../../lib/file-api";
 import * as crypto from "../../lib/file-crypto";
 import { formatBytes, formatProgressBar } from "../../lib/formatting";
@@ -101,6 +101,7 @@ export function useFileOperations({
 	const [inputText, setInputText] = useState("");
 
 	const abortRef = useRef<AbortController | null>(null);
+	const activeOpsRef = useRef(0);
 
 	const uploadSingleFile = async (
 		localPath: string,
@@ -124,36 +125,57 @@ export function useFileOperations({
 		const rawSize = fileStats.size;
 		const totalSize = crypto.getEncryptedFileSize(rawSize);
 
-		const { uploadUrl, storageKey } = await api.initUpload(
-			`files/${randomUUID()}`,
-			totalSize,
-		);
+		let uploadUrl: string;
+		let storageKey: string;
+		try {
+			({ uploadUrl, storageKey } = await api.initUpload(
+				`files/${randomUUID()}`,
+				totalSize,
+			));
+		} catch (err) {
+			throw new Error(
+				`Failed to init upload for ${basename(localPath)}: ${err instanceof Error ? err.message : "unknown"}`,
+			);
+		}
 
-		const encryptedStream = crypto.createEncryptedFileStream(
-			localPath,
-			fileKey,
-			baseIv,
-			(bytes) => onEncryptProgress?.(bytes, rawSize),
-			signal,
-		);
+		try {
+			const encryptedStream = crypto.createEncryptedFileStream(
+				localPath,
+				fileKey,
+				baseIv,
+				(bytes) => onEncryptProgress?.(bytes, rawSize),
+				signal,
+			);
 
-		await api.uploadStreamToUrl(
-			uploadUrl,
-			encryptedStream,
-			totalSize,
-			(bytes) => onUploadProgress?.(bytes, totalSize),
-			signal,
-		);
+			await api.uploadStreamToUrl(
+				uploadUrl,
+				encryptedStream,
+				totalSize,
+				(bytes) => onUploadProgress?.(bytes, totalSize),
+				signal,
+			);
+		} catch (err) {
+			if (err instanceof DOMException && err.name === "AbortError") throw err;
+			throw new Error(
+				`Failed to upload ${basename(localPath)}: ${err instanceof Error ? err.message : "unknown"}`,
+			);
+		}
 
-		await api.completeUpload({
-			storageKey,
-			size: totalSize,
-			folderId: targetFolderId,
-			encName,
-			ivName,
-			encFileKey: encFileKeyHex,
-			ivFileKey: baseIv.toString("hex"),
-		});
+		try {
+			await api.completeUpload({
+				storageKey,
+				size: totalSize,
+				folderId: targetFolderId,
+				encName,
+				ivName,
+				encFileKey: encFileKeyHex,
+				ivFileKey: baseIv.toString("hex"),
+			});
+		} catch (err) {
+			throw new Error(
+				`Failed to register ${basename(localPath)}: ${err instanceof Error ? err.message : "unknown"}`,
+			);
+		}
 
 		return totalSize;
 	};
@@ -219,6 +241,7 @@ export function useFileOperations({
 			const CONCURRENCY = 10;
 			const queue = files.map((f, i) => ({ file: f, index: i }));
 			let completedCount = 0;
+			const failed: { path: string; error: string }[] = [];
 
 			if (process.stdin.isTTY) {
 				process.stdin.setRawMode(true);
@@ -239,16 +262,24 @@ export function useFileOperations({
 						: "";
 					const targetFolderId = folderIdMap.get(parentPath) ?? rootFolder.id;
 
-					await uploadSingleFile(file.fullPath, targetFolderId, signal);
-
-					completedCount++;
+					try {
+						await uploadSingleFile(file.fullPath, targetFolderId, signal);
+						completedCount++;
+					} catch (err) {
+						failed.push({
+							path: file.relativePath,
+							error: err instanceof Error ? err.message : "unknown error",
+						});
+					}
 					const pct =
 						totalFiles > 0
-							? Math.round((completedCount / totalFiles) * 100)
+							? Math.round(
+									((completedCount + failed.length) / totalFiles) * 100,
+								)
 							: 0;
 					setPhaseText("Uploading...");
 					setProgressText(
-						`${formatProgressBar(pct)}  ${String(pct).padStart(3)}%  ${completedCount}/${totalFiles} files`,
+						`${formatProgressBar(pct)}  ${String(pct).padStart(3)}%  ${completedCount + failed.length}/${totalFiles} files`,
 					);
 				}
 			}
@@ -269,10 +300,19 @@ export function useFileOperations({
 
 			folderCache.current.delete(currentFolderId ?? "__root__");
 			await loadFolder(currentFolderId);
-			setStatusText(
-				`Uploaded ${totalFiles} files (${formatBytes(totalRawBytes)}) from ${basename(dirPath)}`,
-			);
-			setStatusVariant("success");
+
+			if (failed.length === 0) {
+				setStatusText(
+					`Uploaded ${totalFiles} files (${formatBytes(totalRawBytes)}) from ${basename(dirPath)}`,
+				);
+				setStatusVariant("success");
+			} else {
+				const failedPaths = failed.map((f) => f.path).join(", ");
+				setStatusText(
+					`Uploaded ${completedCount}/${totalFiles} files. Failed: ${failedPaths}`,
+				);
+				setStatusVariant("error");
+			}
 		} catch (err) {
 			if (err instanceof DOMException && err.name === "AbortError") {
 				setStatusText("Upload cancelled");
@@ -363,12 +403,13 @@ export function useFileOperations({
 		let partPath = "";
 		let downloadComplete = false;
 
-		try {
-			setIsLoading(true);
+		activeOpsRef.current++;
+		setIsLoading(true);
 
+		try {
 			const { url, file } = await api.getDownloadUrl(fileId);
 
-			const downloadsDir = join(homedir(), "Downloads", "cipher");
+			const downloadsDir = getDownloadDir();
 			await mkdir(downloadsDir, { recursive: true });
 			const outputPath = join(downloadsDir, plainName);
 
@@ -407,7 +448,7 @@ export function useFileOperations({
 			unregisterSensitivePath(partPath);
 			partPath = "";
 
-			setStatusText(`Downloaded to ~/Downloads/cipher/${plainName}`);
+			setStatusText(`Downloaded ${plainName} → ${downloadsDir}`);
 			setStatusVariant("success");
 		} catch (err) {
 			if (err instanceof DOMException && err.name === "AbortError") {
@@ -419,10 +460,14 @@ export function useFileOperations({
 			}
 			setStatusVariant("error");
 		} finally {
-			abortRef.current = null;
-			setIsLoading(false);
-			setPhaseText("");
-			setProgressText("");
+			activeOpsRef.current--;
+			if (activeOpsRef.current <= 0) {
+				activeOpsRef.current = 0;
+				abortRef.current = null;
+				setIsLoading(false);
+				setPhaseText("");
+				setProgressText("");
+			}
 			if (partPath) {
 				unregisterSensitivePath(partPath);
 				if (!downloadComplete) await secureUnlink(partPath);
@@ -435,10 +480,12 @@ export function useFileOperations({
 		abortRef.current = controller;
 		const signal = controller.signal;
 
-		const downloadsDir = join(homedir(), "Downloads", "cipher", folderName);
+		const downloadsDir = join(getDownloadDir(), folderName);
+
+		activeOpsRef.current++;
+		setIsLoading(true);
 
 		try {
-			setIsLoading(true);
 			setPhaseText("Scanning");
 			setProgressText("");
 
@@ -456,51 +503,52 @@ export function useFileOperations({
 				return;
 			}
 
-			for (const [i, { file, relativePath }] of filesWithPaths.entries()) {
-				setPhaseText("Downloading...");
-				setProgressText(`File ${i + 1}/${totalFiles}: ${relativePath}`);
+			const CONCURRENCY = 5;
+			let completedCount = 0;
+			const failed: { path: string; error: string }[] = [];
+
+			async function downloadFile({
+				file,
+				relativePath,
+			}: {
+				file: api.FileWithPath["file"];
+				relativePath: string;
+			}) {
+				const outputPath = join(downloadsDir, relativePath);
+				const lastSep = relativePath.lastIndexOf("/");
+				const outputDir =
+					lastSep > -1
+						? join(downloadsDir, relativePath.slice(0, lastSep))
+						: downloadsDir;
+
+				await mkdir(outputDir, { recursive: true });
 
 				let partPath = "";
 				let downloadComplete = false;
-				const outputPath = join(downloadsDir, relativePath);
+				const uuid = randomUUID();
+				partPath = createPartialDownloadPath(outputDir, uuid);
+				registerSensitivePath(partPath);
 
 				try {
 					const { url, file: fileInfo } = await api.getDownloadUrl(file.id);
-
-					const encSize = fileInfo.size;
 					const encryptedStream = await api.downloadStreamFromUrl(url, signal);
-
 					const fileKey = await crypto.decryptFileKeyWithPrivateKey(
 						fileInfo.encFileKey,
 						publicKey,
 						privateKey,
 					);
 
-					const lastSep = relativePath.lastIndexOf("/");
-					if (lastSep > -1) {
-						const outputDir = join(
-							downloadsDir,
-							relativePath.slice(0, lastSep),
-						);
-						await mkdir(outputDir, { recursive: true });
-					}
-					const outputDir =
-						lastSep > -1
-							? join(downloadsDir, relativePath.slice(0, lastSep))
-							: downloadsDir;
-					partPath = createPartialDownloadPath(outputDir, randomUUID());
-					registerSensitivePath(partPath);
-
 					setPhaseText("Downloading and decrypting...");
 					await crypto.decryptStreamToFile(
 						encryptedStream,
 						partPath,
 						fileKey,
-						(bytes) => {
-							const pct = encSize > 0 ? Math.round((bytes / encSize) * 100) : 0;
+						() => {
+							completedCount++;
 							setProgressText(
-								`File ${i + 1}/${totalFiles}: ${relativePath} ${formatProgressBar(pct)} ${String(pct).padStart(3)}%`,
+								`${completedCount}/${totalFiles} files  ${formatProgressBar(Math.round((completedCount / totalFiles) * 100))}`,
 							);
+							completedCount--;
 						},
 						signal,
 					);
@@ -516,8 +564,56 @@ export function useFileOperations({
 				}
 			}
 
-			setStatusText(`Downloaded to ~/Downloads/cipher/${folderName}`);
-			setStatusVariant("success");
+			const queue = [...filesWithPaths];
+			let completed = 0;
+
+			async function worker() {
+				while (true) {
+					if (signal.aborted)
+						throw new DOMException("Download cancelled", "AbortError");
+
+					const task = queue.shift();
+					if (!task) return;
+
+					try {
+						await downloadFile(task);
+						completed++;
+					} catch (err) {
+						failed.push({
+							path: task.relativePath,
+							error: err instanceof Error ? err.message : "unknown error",
+						});
+					}
+					setProgressText(
+						`${completed + failed.length}/${totalFiles} files  ${formatProgressBar(Math.round(((completed + failed.length) / totalFiles) * 100))}`,
+					);
+				}
+			}
+
+			setPhaseText("Downloading...");
+			setProgressText(`0/${totalFiles} files`);
+
+			try {
+				await Promise.all(
+					Array.from({ length: Math.min(CONCURRENCY, totalFiles) }, () =>
+						worker(),
+					),
+				);
+			} catch (err) {
+				controller.abort();
+				throw err;
+			}
+
+			if (failed.length === 0) {
+				setStatusText(`Downloaded ${folderName} → ${getDownloadDir()}`);
+				setStatusVariant("success");
+			} else {
+				const failedPaths = failed.map((f) => f.path).join(", ");
+				setStatusText(
+					`Downloaded ${completed}/${totalFiles} files. Failed: ${failedPaths}`,
+				);
+				setStatusVariant("error");
+			}
 		} catch (err) {
 			if (err instanceof DOMException && err.name === "AbortError") {
 				setStatusText("Download cancelled");
@@ -528,10 +624,14 @@ export function useFileOperations({
 			}
 			setStatusVariant("error");
 		} finally {
-			abortRef.current = null;
-			setIsLoading(false);
-			setPhaseText("");
-			setProgressText("");
+			activeOpsRef.current--;
+			if (activeOpsRef.current <= 0) {
+				activeOpsRef.current = 0;
+				abortRef.current = null;
+				setIsLoading(false);
+				setPhaseText("");
+				setProgressText("");
+			}
 		}
 	};
 
@@ -632,6 +732,57 @@ export function useFileOperations({
 		}
 	};
 
+	const handleBatchDelete = async (items: DisplayItem[]) => {
+		if (items.length === 0) return;
+
+		try {
+			setIsLoading(true);
+			setPhaseText("Deleting...");
+			setProgressText(`0/${items.length}`);
+
+			let deleted = 0;
+			const failed: { name: string; error: string }[] = [];
+
+			for (const item of items) {
+				try {
+					await api.deleteItem(item.id, item.type as "file" | "folder");
+					deleted++;
+				} catch (err) {
+					failed.push({
+						name: item.name,
+						error: err instanceof Error ? err.message : "unknown error",
+					});
+				}
+				setProgressText(`${deleted + failed.length}/${items.length}`);
+			}
+
+			folderCache.current.delete(currentFolderId ?? "__root__");
+			await loadFolder(currentFolderId);
+
+			if (failed.length === 0) {
+				setStatusText(`Deleted ${deleted} item(s)`);
+				setStatusVariant("success");
+			} else {
+				const failedNames = failed.map((f) => f.name).join(", ");
+				setStatusText(
+					`Deleted ${deleted}/${items.length}. Failed: ${failedNames}`,
+				);
+				setStatusVariant("error");
+			}
+		} catch (err) {
+			folderCache.current.delete(currentFolderId ?? "__root__");
+			await loadFolder(currentFolderId);
+			setStatusText(
+				err instanceof Error ? err.message : "Could not delete some items",
+			);
+			setStatusVariant("error");
+		} finally {
+			setIsLoading(false);
+			setPhaseText("");
+			setProgressText("");
+		}
+	};
+
 	return {
 		phaseText,
 		progressText,
@@ -645,5 +796,6 @@ export function useFileOperations({
 		handleCreateFolder,
 		handleRename,
 		handleDelete,
+		handleBatchDelete,
 	};
 }

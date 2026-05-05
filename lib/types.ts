@@ -9,7 +9,12 @@ export type Mode =
 	| "confirmQuit"
 	| "confirmLogout"
 	| "loading"
-	| "help";
+	| "help"
+	| "downloadDir"
+	| "update";
+
+export type SortKey = "name" | "size" | "date";
+export type SortDir = "asc" | "desc";
 
 export type ItemType = "file" | "folder" | "parent";
 

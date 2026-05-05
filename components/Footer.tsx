@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-
 import { Box, Text } from "ink";
 import React from "react";
 import { COLORS } from "../lib/colors";

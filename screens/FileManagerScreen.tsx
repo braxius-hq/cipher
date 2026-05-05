@@ -3,20 +3,25 @@
 import { homedir } from "node:os";
 import { Box, Text, useInput } from "ink";
 import { useEffect, useState } from "react";
+import Dialog from "../components/Dialog";
 import ConfirmDialog from "../components/dialogs/ConfirmDialog";
 import HelpDialog from "../components/dialogs/HelpDialog";
 import InputDialog from "../components/dialogs/InputDialog";
 import SettingsDialog from "../components/dialogs/SettingsDialog";
+import UpdateDialog from "../components/dialogs/UpdateDialog";
 import UploadDialog from "../components/dialogs/UploadDialog";
 import FileList from "../components/FileList";
+import PathInput from "../components/PathInput";
 import { Spinner, StatusMessage } from "../components/ui";
 import { authClient } from "../lib/auth-client";
 import { COLORS } from "../lib/colors";
 import {
 	clearAuth,
 	getDecPrivateKey,
+	getDownloadDir,
 	getMasterKey,
 	getPublicKey,
+	setDownloadDir as saveDownloadDir,
 } from "../lib/config";
 import type { Mode } from "../lib/types";
 import { useFileOperations } from "./hooks/useFileOperations";
@@ -30,6 +35,8 @@ interface Props {
 export default function FileManagerScreen({ onLogout, latestVersion }: Props) {
 	const [mode, setMode] = useState<Mode>("loading");
 	const [displayEmail, setDisplayEmail] = useState("");
+	const [downloadDirInput, setDownloadDirInput] = useState("");
+	const [updateDismissed, setUpdateDismissed] = useState(false);
 
 	// Keys loaded asynchronously from Bun.secrets
 	const [masterKey, setMasterKeyState] = useState("");
@@ -58,6 +65,12 @@ export default function FileManagerScreen({ onLogout, latestVersion }: Props) {
 		});
 	}, []);
 
+	useEffect(() => {
+		if (keysLoaded && latestVersion && !updateDismissed && mode === "browse") {
+			setMode("update");
+		}
+	}, [keysLoaded, latestVersion, updateDismissed, mode]);
+
 	const nav = useFolderNavigation(masterKey, keysLoaded);
 
 	const ops = useFileOperations({
@@ -71,7 +84,8 @@ export default function FileManagerScreen({ onLogout, latestVersion }: Props) {
 		setStatusVariant: nav.setStatusVariant,
 	});
 
-	const selectedItem = nav.items[nav.selectedIndex];
+	const displayItems = nav.displayItems();
+	const selectedItem = displayItems[nav.selectedIndex];
 
 	const handleAction = async () => {
 		if (mode === "upload") {
@@ -98,7 +112,15 @@ export default function FileManagerScreen({ onLogout, latestVersion }: Props) {
 		}
 
 		if (mode === "deleteConfirm") {
-			if (selectedItem && selectedItem.type !== "parent") {
+			if (nav.selectedIds.size > 0) {
+				setMode("browse");
+				await ops.handleBatchDelete(
+					displayItems.filter(
+						(i) => nav.selectedIds.has(i.id) && i.type !== "parent",
+					),
+				);
+				nav.clearSelection();
+			} else if (selectedItem && selectedItem.type !== "parent") {
 				setMode("browse");
 				await ops.handleDelete(selectedItem);
 			} else {
@@ -129,7 +151,9 @@ export default function FileManagerScreen({ onLogout, latestVersion }: Props) {
 		mode === "newFolder" ||
 		mode === "rename" ||
 		mode === "settings" ||
-		mode === "help";
+		mode === "help" ||
+		mode === "downloadDir" ||
+		mode === "update";
 
 	useInput((input, key) => {
 		if (!keysLoaded) return;
@@ -143,8 +167,12 @@ export default function FileManagerScreen({ onLogout, latestVersion }: Props) {
 
 		if (key.escape || (key.ctrl && input === "c")) {
 			if (mode !== "browse") {
+				if (mode === "update") {
+					setUpdateDismissed(true);
+				}
 				setMode("browse");
 				nav.setStatusText("");
+				nav.clearSelection();
 				return;
 			}
 			setMode("confirmQuit");
@@ -161,12 +189,31 @@ export default function FileManagerScreen({ onLogout, latestVersion }: Props) {
 			return;
 		}
 
+		if (mode === "downloadDir") {
+			if (key.escape) {
+				setMode("browse");
+			}
+			return;
+		}
+
 		if (mode === "browse") {
 			if (key.upArrow || input === "k") {
-				nav.moveSelection("up", nav.items.length);
+				nav.moveSelection("up", displayItems.length);
 			}
 			if (key.downArrow || input === "j") {
-				nav.moveSelection("down", nav.items.length);
+				nav.moveSelection("down", displayItems.length);
+			}
+			if (key.pageUp || (key.ctrl && input === "u")) {
+				nav.moveSelection("pageUp", displayItems.length);
+			}
+			if (key.pageDown || (key.ctrl && input === "d")) {
+				nav.moveSelection("pageDown", displayItems.length);
+			}
+			if (key.home || input === "g") {
+				nav.moveSelection("home", displayItems.length);
+			}
+			if (key.end || (input === "G" && !key.shift)) {
+				nav.moveSelection("end", displayItems.length);
 			}
 			if (key.return || input === "l") {
 				handleAction();
@@ -175,8 +222,26 @@ export default function FileManagerScreen({ onLogout, latestVersion }: Props) {
 				nav.goBack();
 			}
 
+			if (input === " ") {
+				if (selectedItem && selectedItem.type !== "parent") {
+					nav.toggleSelect(selectedItem.id);
+				}
+			}
+			if (input.toLowerCase() === "a") {
+				const toggled = new Set(nav.selectedIds);
+				for (const item of displayItems) {
+					if (item.type !== "parent") {
+						toggled.add(item.id);
+					}
+				}
+				if (toggled.size === nav.selectedIds.size && nav.selectedIds.size > 0) {
+					nav.clearSelection();
+				} else {
+					nav.setSelectedIds(toggled);
+				}
+			}
 			if (input === "?") setMode("help");
-			if (input.toLowerCase() === "s") setMode("settings");
+			if (input.toLowerCase() === "s" && !key.ctrl) setMode("settings");
 			if (input.toLowerCase() === "u") {
 				ops.setInputText(`${homedir()}/`);
 				setMode("upload");
@@ -186,7 +251,9 @@ export default function FileManagerScreen({ onLogout, latestVersion }: Props) {
 				setMode("newFolder");
 			}
 			if (input.toLowerCase() === "d") {
-				if (selectedItem && selectedItem.type !== "parent") {
+				if (nav.selectedIds.size > 0) {
+					setMode("deleteConfirm");
+				} else if (selectedItem && selectedItem.type !== "parent") {
 					setMode("deleteConfirm");
 				}
 			}
@@ -200,10 +267,27 @@ export default function FileManagerScreen({ onLogout, latestVersion }: Props) {
 				}
 			}
 			if (input.toLowerCase() === "z") {
-				if (selectedItem?.type === "folder") {
+				if (nav.selectedIds.size > 0) {
+					const selectedItems = displayItems.filter(
+						(i) => nav.selectedIds.has(i.id) && i.type !== "parent",
+					);
+					for (const item of selectedItems) {
+						if (item.type === "folder") {
+							ops.handleFolderDownload(item.id, item.name);
+						} else {
+							ops.handleDownload(item.id, item.name);
+						}
+					}
+				} else if (selectedItem?.type === "folder") {
 					ops.handleFolderDownload(selectedItem.id, selectedItem.name);
+				} else if (selectedItem?.type === "file") {
+					ops.handleDownload(selectedItem.id, selectedItem.name);
 				}
 			}
+			// Sort by column
+			if (input === "1") nav.toggleSort("name");
+			if (input === "2") nav.toggleSort("size");
+			if (input === "3") nav.toggleSort("date");
 		}
 	});
 
@@ -225,6 +309,15 @@ export default function FileManagerScreen({ onLogout, latestVersion }: Props) {
 	const selectedForDelete =
 		selectedItem && selectedItem.type !== "parent" ? selectedItem : null;
 
+	const deleteTitle =
+		nav.selectedIds.size > 0
+			? `Delete ${nav.selectedIds.size} item(s)?`
+			: selectedForDelete?.type === "folder"
+				? `Delete '${selectedForDelete.name}' and all contents?`
+				: selectedForDelete
+					? `Delete '${selectedForDelete.name}'?`
+					: "";
+
 	return (
 		<Box flexDirection="column" width="100%" flexGrow={1} paddingX={1}>
 			{/* Header */}
@@ -241,16 +334,18 @@ export default function FileManagerScreen({ onLogout, latestVersion }: Props) {
 				</Text>
 				<Text dimColor>Encrypted. Private. Yours.</Text>
 			</Box>
-
 			{/* Main Content */}
 			<Box flexDirection="column" flexGrow={1} paddingY={1}>
 				{!isInteractiveDialog && (
 					<FileList
-						items={nav.items}
+						items={displayItems}
 						selectedIndex={nav.selectedIndex}
 						dimmed={isBusy}
 						scrollOffset={nav.scrollOffset}
 						visibleCount={nav.visibleCount}
+						selectedIds={nav.selectedIds}
+						sortKey={nav.sortKey}
+						sortDir={nav.sortDir}
 					/>
 				)}
 
@@ -264,17 +359,16 @@ export default function FileManagerScreen({ onLogout, latestVersion }: Props) {
 						justifyContent="center"
 						alignItems="center"
 					>
-						{mode === "deleteConfirm" && selectedForDelete && (
+						{mode === "deleteConfirm" && deleteTitle && (
 							<ConfirmDialog
-								title={
-									selectedForDelete.type === "folder"
-										? `Delete '${selectedForDelete.name}' and all contents?`
-										: `Delete '${selectedForDelete.name}'?`
-								}
+								title={deleteTitle}
 								borderColor={COLORS.ERROR}
 								titleColor={COLORS.ERROR}
 								onConfirm={handleAction}
-								onCancel={() => setMode("browse")}
+								onCancel={() => {
+									nav.clearSelection();
+									setMode("browse");
+								}}
 							/>
 						)}
 						{mode === "confirmQuit" && (
@@ -303,6 +397,10 @@ export default function FileManagerScreen({ onLogout, latestVersion }: Props) {
 							<SettingsDialog
 								displayEmail={displayEmail}
 								onLogout={() => setMode("confirmLogout")}
+								onDownloadDir={() => {
+									setDownloadDirInput(getDownloadDir());
+									setMode("downloadDir");
+								}}
 							/>
 						)}
 						{mode === "upload" && (
@@ -332,19 +430,38 @@ export default function FileManagerScreen({ onLogout, latestVersion }: Props) {
 							/>
 						)}
 						{mode === "help" && <HelpDialog />}
+						{mode === "downloadDir" && (
+							<Dialog
+								borderColor={COLORS.ACCENT}
+								title="Download Directory"
+								hint="[Tab] Autocomplete    [Enter] Save    [Esc] Cancel"
+							>
+								<Box flexDirection="row" width="100%">
+									<Text color={COLORS.SUCCESS}>Path: </Text>
+									<Box flexGrow={1}>
+										<PathInput
+											value={downloadDirInput}
+											onChange={setDownloadDirInput}
+											onSubmit={(val) => {
+												const dir = val.trim() || getDownloadDir();
+												saveDownloadDir(dir);
+												setMode("browse");
+												nav.setStatusText(`Download directory: ${dir}`);
+												nav.setStatusVariant("success");
+											}}
+										/>
+									</Box>
+								</Box>
+							</Dialog>
+						)}
+						{mode === "update" && latestVersion && (
+							<UpdateDialog latestVersion={latestVersion} />
+						)}
 					</Box>
 				)}
 				{/* The center Status Banner is removed to keep UI stable */}
 			</Box>
-
 			{/* Footer / Status Area */}
-			{latestVersion && !isInteractiveDialog && (
-				<Box width="100%" paddingX={2} paddingY={0}>
-					<Text color={COLORS.WARNING} dimColor>
-						v{latestVersion} available — run `cipher upgrade`
-					</Text>
-				</Box>
-			)}
 			{!isInteractiveDialog && (
 				<Box
 					width="100%"
@@ -376,11 +493,11 @@ export default function FileManagerScreen({ onLogout, latestVersion }: Props) {
 						>
 							{[
 								{ key: "?", label: "Help" },
-								{ key: "Enter", label: "Open/Down" },
+								{ key: "Enter", label: "Open" },
 								{ key: "Bksp", label: "Back" },
 								{ key: "U", label: "Upload" },
-								{ key: "N", label: "New Dir" },
-								{ key: "R", label: "Rename" },
+								{ key: "Z", label: "Down" },
+								{ key: "Space", label: "Select" },
 								{ key: "D", label: "Delete" },
 							].map((s) => (
 								<Box key={s.key} marginRight={2}>

@@ -4,12 +4,33 @@ import { useStdout } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "../../lib/file-api";
 import * as crypto from "../../lib/file-crypto";
-import type { DisplayItem } from "../../lib/types";
+import type { DisplayItem, SortDir, SortKey } from "../../lib/types";
 
 const VISIBLE_OVERHEAD = 14;
 
 function getTerminalRows(stdout?: { rows?: number }) {
 	return stdout?.rows ?? process.stdout.rows ?? 24;
+}
+
+function sortItems(
+	items: DisplayItem[],
+	key: SortKey,
+	dir: SortDir,
+): DisplayItem[] {
+	const parent = items.find((i) => i.type === "parent");
+	const rest = items.filter((i) => i.type !== "parent");
+	const folders = rest.filter((i) => i.type === "folder");
+	const files = rest.filter((i) => i.type === "file");
+
+	const sorted = [...folders, ...files].sort((a, b) => {
+		let cmp = 0;
+		if (key === "name") cmp = a.name.localeCompare(b.name);
+		else if (key === "size") cmp = (a.size ?? 0) - (b.size ?? 0);
+		else if (key === "date") cmp = (a.date ?? "").localeCompare(b.date ?? "");
+		return dir === "desc" ? -cmp : cmp;
+	});
+
+	return parent ? [parent, ...sorted] : sorted;
 }
 
 export function useFolderNavigation(masterKey: string, keysLoaded = true) {
@@ -24,6 +45,9 @@ export function useFolderNavigation(masterKey: string, keysLoaded = true) {
 	);
 	const [isLoading, setIsLoading] = useState(false);
 	const [scrollOffset, setScrollOffset] = useState(0);
+	const [sortKey, setSortKey] = useState<SortKey>("name");
+	const [sortDir, setSortDir] = useState<SortDir>("asc");
+	const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
 	const { stdout } = useStdout();
 	const [terminalRows, setTerminalRows] = useState(getTerminalRows(stdout));
@@ -37,18 +61,44 @@ export function useFolderNavigation(masterKey: string, keysLoaded = true) {
 		};
 	}, [stdout]);
 
+	const folderCache = useRef<Map<string, DisplayItem[]>>(new Map());
+
+	const displayItems = useCallback(() => {
+		return sortItems(items, sortKey, sortDir);
+	}, [items, sortKey, sortDir]);
+
+	const getDisplayItems = displayItems;
+
 	const moveSelection = useCallback(
-		(direction: "up" | "down", itemsLength: number) => {
+		(
+			direction: "up" | "down" | "pageUp" | "pageDown" | "home" | "end",
+			itemsLength: number,
+		) => {
 			if (itemsLength === 0) return;
 
-			const nextIndex =
-				direction === "up"
-					? selectedIndex > 0
-						? selectedIndex - 1
-						: itemsLength - 1
-					: selectedIndex < itemsLength - 1
-						? selectedIndex + 1
-						: 0;
+			const pageSize = Math.max(1, visibleCount - 2);
+			let nextIndex = selectedIndex;
+
+			switch (direction) {
+				case "up":
+					nextIndex = selectedIndex > 0 ? selectedIndex - 1 : itemsLength - 1;
+					break;
+				case "down":
+					nextIndex = selectedIndex < itemsLength - 1 ? selectedIndex + 1 : 0;
+					break;
+				case "pageUp":
+					nextIndex = Math.max(0, selectedIndex - pageSize);
+					break;
+				case "pageDown":
+					nextIndex = Math.min(itemsLength - 1, selectedIndex + pageSize);
+					break;
+				case "home":
+					nextIndex = 0;
+					break;
+				case "end":
+					nextIndex = itemsLength - 1;
+					break;
+			}
 
 			let nextOffset = scrollOffset;
 			if (nextIndex < scrollOffset) {
@@ -65,8 +115,6 @@ export function useFolderNavigation(masterKey: string, keysLoaded = true) {
 		[selectedIndex, scrollOffset, visibleCount],
 	);
 
-	const folderCache = useRef<Map<string, DisplayItem[]>>(new Map());
-
 	const loadFolder = useCallback(
 		async (folderId: string | null) => {
 			if (!masterKey) return;
@@ -79,6 +127,7 @@ export function useFolderNavigation(masterKey: string, keysLoaded = true) {
 				setSelectedIndex(0);
 				setScrollOffset(0);
 				setCurrentFolderId(folderId);
+				setSelectedIds(new Set());
 				setStatusText("");
 				return;
 			}
@@ -124,6 +173,7 @@ export function useFolderNavigation(masterKey: string, keysLoaded = true) {
 				setSelectedIndex(0);
 				setScrollOffset(0);
 				setCurrentFolderId(folderId);
+				setSelectedIds(new Set());
 				folderCache.current.set(cacheKey, displayItems);
 			} catch (err) {
 				setStatusText(
@@ -159,6 +209,33 @@ export function useFolderNavigation(masterKey: string, keysLoaded = true) {
 		[currentFolderId, loadFolder],
 	);
 
+	const toggleSort = useCallback((key: SortKey) => {
+		setSortKey((prev) => {
+			if (prev === key) {
+				setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+			} else {
+				setSortDir("asc");
+			}
+			return key;
+		});
+	}, []);
+
+	const toggleSelect = useCallback((itemId: string) => {
+		setSelectedIds((prev) => {
+			const next = new Set(prev);
+			if (next.has(itemId)) {
+				next.delete(itemId);
+			} else {
+				next.add(itemId);
+			}
+			return next;
+		});
+	}, []);
+
+	const clearSelection = useCallback(() => {
+		setSelectedIds(new Set());
+	}, []);
+
 	// Only load root folder once keys are available
 	useEffect(() => {
 		if (keysLoaded && masterKey) {
@@ -170,6 +247,7 @@ export function useFolderNavigation(masterKey: string, keysLoaded = true) {
 
 	return {
 		items,
+		displayItems: getDisplayItems,
 		selectedIndex,
 		setSelectedIndex,
 		currentFolderId,
@@ -189,5 +267,12 @@ export function useFolderNavigation(masterKey: string, keysLoaded = true) {
 		scrollOffset,
 		visibleCount,
 		moveSelection,
+		sortKey,
+		sortDir,
+		toggleSort,
+		selectedIds,
+		setSelectedIds,
+		toggleSelect,
+		clearSelection,
 	};
 }

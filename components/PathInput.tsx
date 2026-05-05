@@ -21,6 +21,7 @@ interface Suggestion {
 
 export default function PathInput({ value, onChange, onSubmit }: Props) {
 	const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+	const [totalMatches, setTotalMatches] = useState(0);
 	const [keyCounter, setKeyCounter] = useState(0);
 
 	useInput(async (_input, key) => {
@@ -47,6 +48,7 @@ export default function PathInput({ value, onChange, onSubmit }: Props) {
 
 				if (matches.length === 0) {
 					setSuggestions([]);
+					setTotalMatches(0);
 					return;
 				}
 
@@ -64,6 +66,7 @@ export default function PathInput({ value, onChange, onSubmit }: Props) {
 					onChange(newValue);
 					setKeyCounter((c) => c + 1);
 					setSuggestions([]);
+					setTotalMatches(0);
 				} else {
 					let i = 0;
 					const [first] = matches;
@@ -84,7 +87,7 @@ export default function PathInput({ value, onChange, onSubmit }: Props) {
 						setKeyCounter((c) => c + 1);
 					}
 
-					const topMatches = matches.slice(0, 8);
+					const topMatches = matches.slice(0, 10);
 					const items = await Promise.all(
 						topMatches.map(async (m) => {
 							const isDir = await stat(join(actualDir, m))
@@ -94,6 +97,7 @@ export default function PathInput({ value, onChange, onSubmit }: Props) {
 						}),
 					);
 					setSuggestions(items);
+					setTotalMatches(matches.length);
 				}
 			} catch (_err) {
 				// Ignore filesystem errors
@@ -124,6 +128,11 @@ export default function PathInput({ value, onChange, onSubmit }: Props) {
 							</Text>
 						</Box>
 					))}
+					{totalMatches > suggestions.length && (
+						<Text dimColor italic>
+							...and {totalMatches - suggestions.length} more
+						</Text>
+					)}
 				</Box>
 			)}
 		</Box>

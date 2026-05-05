@@ -173,13 +173,26 @@ function sweepPartialDownloadsSync(directory: string) {
 	} catch {}
 }
 
+import { getDownloadDir } from "./config";
+
 export async function sweepResidue() {
 	await mkdir(getTempDir(), { recursive: true, mode: 0o700 });
 	await sweepDirectoryFiles(getTempDir());
-	await sweepPartialDownloads(join(homedir(), "Downloads", "cipher"));
+	const configuredDir = getDownloadDir();
+	await sweepPartialDownloads(configuredDir);
+	// Also sweep legacy default if different from configured
+	const legacyDir = join(homedir(), "Downloads", "cipher");
+	if (legacyDir !== configuredDir) {
+		await sweepPartialDownloads(legacyDir);
+	}
 }
 
 export function sweepResidueSync() {
 	sweepDirectoryFilesSync(getTempDir());
-	sweepPartialDownloadsSync(join(homedir(), "Downloads", "cipher"));
+	const configuredDir = getDownloadDir();
+	sweepPartialDownloadsSync(configuredDir);
+	const legacyDir = join(homedir(), "Downloads", "cipher");
+	if (legacyDir !== configuredDir) {
+		sweepPartialDownloadsSync(legacyDir);
+	}
 }

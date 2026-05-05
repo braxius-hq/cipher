@@ -4,17 +4,23 @@ import { Box, Text } from "ink";
 import { useState } from "react";
 import { authClient } from "../../lib/auth-client";
 import { COLORS } from "../../lib/colors";
+import { getDownloadDir } from "../../lib/config";
 import Dialog from "../Dialog";
 import { Select } from "../ui";
 
 interface Props {
 	displayEmail: string;
 	onLogout: () => void;
+	onDownloadDir?: () => void;
 }
 
 type View = "menu" | "accountInfo";
 
-export default function SettingsDialog({ displayEmail, onLogout }: Props) {
+export default function SettingsDialog({
+	displayEmail,
+	onLogout,
+	onDownloadDir,
+}: Props) {
 	const [view, setView] = useState<View>("menu");
 	const [accountName, setAccountName] = useState("");
 	const [accountCreated, setAccountCreated] = useState("");
@@ -55,6 +61,7 @@ export default function SettingsDialog({ displayEmail, onLogout }: Props) {
 			<Select
 				options={[
 					{ label: "Account Info", value: "accountInfo" },
+					{ label: `Download Dir: ${getDownloadDir()}`, value: "downloadDir" },
 					{ label: "Logout", value: "logout" },
 				]}
 				onChange={(val) => {
@@ -79,6 +86,8 @@ export default function SettingsDialog({ displayEmail, onLogout }: Props) {
 								setAccountCreated("");
 							}
 						});
+					} else if (val === "downloadDir") {
+						onDownloadDir?.();
 					} else if (val === "logout") {
 						onLogout();
 					}

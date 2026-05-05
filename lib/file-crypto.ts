@@ -162,6 +162,14 @@ export function createEncryptedFileStream(
 	);
 }
 
+/**
+ * Decrypts a stream and writes to outputPath.
+ *
+ * IMPORTANT: This writes directly to outputPath — it is NOT atomic.
+ * Callers MUST pass a temporary `.part` path and atomically rename
+ * the result after this function resolves. On failure, callers must
+ * securely delete the partial file.
+ */
 export async function decryptStreamToFile(
 	inputStream: Readable,
 	outputPath: string,
@@ -283,6 +291,10 @@ export async function decryptFileKeyWithPrivateKey(
  * Encrypt a file sequentially using AES-GCM in chunks.
  * We XOR the chunk index into the IV to ensure unique nonces per chunk.
  * Handles backpressure cleanly via Transform stream to avoid OOM on huge files.
+ *
+ * IMPORTANT: This writes directly to outputPath — it is NOT atomic.
+ * On failure, a partial encrypted file may remain. Callers should use
+ * a temp path and rename on success, or clean up on failure.
  */
 export async function encryptFile(
 	inputPath: string,

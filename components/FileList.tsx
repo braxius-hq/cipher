@@ -2,7 +2,7 @@
 import { Box, Text } from "ink";
 import { COLORS } from "../lib/colors";
 import { formatBytes } from "../lib/formatting";
-import type { DisplayItem } from "../lib/types";
+import type { DisplayItem, SortDir, SortKey } from "../lib/types";
 
 interface Props {
 	items: DisplayItem[];
@@ -10,6 +10,9 @@ interface Props {
 	dimmed: boolean;
 	scrollOffset: number;
 	visibleCount: number;
+	selectedIds: Set<string>;
+	sortKey: SortKey;
+	sortDir: SortDir;
 }
 
 export default function FileList({
@@ -18,6 +21,9 @@ export default function FileList({
 	dimmed,
 	scrollOffset,
 	visibleCount,
+	selectedIds,
+	sortKey,
+	sortDir,
 }: Props) {
 	if (items.length === 0) {
 		return (
@@ -44,29 +50,38 @@ export default function FileList({
 		);
 	}
 
+	const sortIndicator = (key: SortKey, label: string) => {
+		const active = sortKey === key;
+		const arrow = active ? (sortDir === "asc" ? " ▲" : " ▼") : "";
+		return (
+			<Text
+				bold={active}
+				underline={active}
+				color={active ? COLORS.ACCENT : undefined}
+			>
+				{label}
+				{arrow}
+			</Text>
+		);
+	};
+
 	return (
 		<Box flexDirection="row" width="100%">
 			<Box flexDirection="column" flexGrow={1}>
-				<Box flexDirection="row" paddingX={2} marginBottom={1}>
-					<Box flexGrow={1}>
-						<Text bold underline>
-							Name
-						</Text>
-					</Box>
+				<Box flexDirection="row" paddingX={1} marginBottom={1}>
+					<Box width={2} />
+					<Box flexGrow={1}>{sortIndicator("name", "Name")}</Box>
 					<Box width={12} justifyContent="flex-end" marginRight={2}>
-						<Text bold underline>
-							Size
-						</Text>
+						{sortIndicator("size", "Size")}
 					</Box>
 					<Box width={14} justifyContent="flex-end">
-						<Text bold underline>
-							Modified
-						</Text>
+						{sortIndicator("date", "Modified")}
 					</Box>
 				</Box>
 				{items.slice(scrollOffset, end).map((item, i) => {
 					const actualIndex = scrollOffset + i;
 					const isSelected = actualIndex === selectedIndex;
+					const isChecked = selectedIds.has(item.id);
 					let icon = "📄";
 					let baseColor: string | undefined;
 
@@ -89,14 +104,22 @@ export default function FileList({
 					const metaColor =
 						isSelected && !dimmed ? COLORS.ACCENT_TEXT : COLORS.TEXT_SECONDARY;
 
+					const checkMark =
+						item.type !== "parent" ? (isChecked ? "■" : "□") : " ";
+
 					return (
 						<Box
 							key={`${item.id}-${isSelected}`}
 							flexDirection="row"
 							width="100%"
-							paddingX={2}
+							paddingX={1}
 							backgroundColor={bgColor}
 						>
+							<Box width={2}>
+								<Text color={isChecked ? COLORS.SUCCESS : metaColor}>
+									{checkMark}
+								</Text>
+							</Box>
 							<Box flexGrow={1}>
 								<Text
 									color={textColor}

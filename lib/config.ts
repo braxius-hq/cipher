@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { homedir } from "node:os";
+import { join } from "node:path";
 import Conf from "conf";
 import { CONF_PROJECT_NAME, DEFAULT_BASE_URL } from "./constants";
 
@@ -6,10 +8,11 @@ const SERVICE_NAME = "cipher";
 
 // ── Non-sensitive config (plaintext JSON, safe to store on disk) ─────────
 
-const config = new Conf<{ baseUrl: string }>({
+const config = new Conf<{ baseUrl: string; downloadDir: string }>({
 	projectName: CONF_PROJECT_NAME,
 	defaults: {
 		baseUrl: DEFAULT_BASE_URL,
+		downloadDir: "",
 	},
 });
 
@@ -19,6 +22,16 @@ export function getBaseUrl(): string {
 
 export function setBaseUrl(url: string): void {
 	config.set("baseUrl", url);
+}
+
+export function getDownloadDir(): string {
+	const dir =
+		config.get("downloadDir") || join(homedir(), "Downloads", "cipher");
+	return dir.replace(/\/+$/, "");
+}
+
+export function setDownloadDir(dir: string): void {
+	config.set("downloadDir", dir);
 }
 
 export function resetConfig(): void {

@@ -17,18 +17,9 @@ export default function TextInput({
 	defaultValue = "",
 }: Props) {
 	const [value, setValue] = useState(defaultValue);
-	const [showCursor, setShowCursor] = useState(true);
-
 	useEffect(() => {
 		setValue(defaultValue);
 	}, [defaultValue]);
-
-	useEffect(() => {
-		const interval = setInterval(() => {
-			setShowCursor((c) => !c);
-		}, 500);
-		return () => clearInterval(interval);
-	}, []);
 
 	useInput((input, key) => {
 		if (isDisabled) return;
@@ -67,7 +58,7 @@ export default function TextInput({
 		}
 	});
 
-	const cursor = isDisabled ? "" : showCursor ? "█" : "";
+	const cursor = isDisabled ? "" : "█";
 
 	return (
 		<Text>
