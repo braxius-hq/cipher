@@ -46,19 +46,24 @@ cleanup() {
 trap cleanup EXIT
 
 echo "Installing latest release (~100 MB)..."
-LATEST_URL=$(curl -sf https://api.github.com/repos/$REPO/releases/latest | grep "browser_download_url" | grep -E "$BINARY_PATTERN" | cut -d '"' -f 4 | head -n 1)
+LATEST_URL=$(curl -sfL https://api.github.com/repos/$REPO/releases/latest | sed -n 's/.*"browser_download_url"[^"]*"\([^"]*\)".*/\1/p' | grep -E "$BINARY_PATTERN" | head -n 1)
 
 if [ -z "$LATEST_URL" ]; then
 	echo "Error: Could not find latest release for your platform."
 	exit 1
 fi
 
-curl -#fL -o "$BINARY" "$LATEST_URL"
+curl -#fL --retry 3 --retry-delay 2 -o "$BINARY" "$LATEST_URL"
 
 FILE_TYPE=$(file -b "$BINARY" 2>/dev/null || true)
 if ! echo "$FILE_TYPE" | grep -qiE "ELF|Mach-O"; then
 	echo "Error: Downloaded file is not a valid binary."
 	echo "       Got: $FILE_TYPE"
+	echo ""
+	echo "       First bytes of download (for debugging):"
+	head -c 200 "$BINARY" 2>/dev/null | tr -d '\0' || true
+	echo ""
+	echo ""
 	echo "       This may be a temporary issue. Try again later."
 	exit 1
 fi
