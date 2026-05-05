@@ -42,6 +42,7 @@ cipher
 | `version` | Show the version number |
 | `help` | Show the help message |
 | `upgrade` | Update to the latest version |
+| `uninstall` | Completely remove Cipher and all local data |
 
 ### Options
 

@@ -1,6 +1,9 @@
 #!/usr/bin/env bun
 import { execSync } from "node:child_process";
+import { rmSync, unlinkSync } from "node:fs";
 // SPDX-License-Identifier: AGPL-3.0-only
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { render } from "ink";
 import App from "./App";
 import {
@@ -28,9 +31,10 @@ An end-to-end encrypted cloud storage client for the terminal.
 Usage: cipher <command> [options]
 
 Commands:
-  version    Show version number
-  help       Show this help
-  upgrade    Update to the latest version
+  version     Show version number
+  help        Show this help
+  upgrade     Update to the latest version
+  uninstall   Completely remove Cipher and all local data
 
 Options:
   --reset         Reset configuration and clear authentication
@@ -74,6 +78,27 @@ if (command === "upgrade") {
 		);
 		process.exit(1);
 	}
+	process.exit(0);
+}
+
+if (command === "uninstall") {
+	console.log("Removing Cipher...");
+
+	await clearAuth();
+
+	resetConfig();
+	rmSync(join(homedir(), ".config", "cipher"), {
+		recursive: true,
+		force: true,
+	});
+
+	rmSync("/tmp/cipher-tmp", { recursive: true, force: true });
+
+	sweepResidueSync();
+
+	unlinkSync(process.execPath);
+
+	console.log("Cipher completely removed.");
 	process.exit(0);
 }
 
