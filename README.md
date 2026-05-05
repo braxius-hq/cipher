@@ -35,13 +35,19 @@ Run the app by simply typing:
 cipher
 ```
 
-### CLI Options
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `version` | Show the version number |
+| `help` | Show the help message |
+| `upgrade` | Update to the latest version |
+
+### Options
 
 | Flag | Description |
 |------|-------------|
-| `-v`, `--version` | Show the version number |
-| `-h`, `--help` | Show the help message |
-| `--reset` | Reset configuration and clear local authentication securely |
+| `--reset` | Reset configuration and clear local authentication |
 | `--clear-auth` | Clear authentication state only |
 | `--api-url <url>` | Override the default API URL |
 
