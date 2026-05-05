@@ -15,7 +15,12 @@ Cipher implements strict end-to-end encryption. Your data is encrypted locally o
 
 ## Installation
 
-### Linux (One-Line Installer)
+### Requirements
+
+- **Linux** — x64 (amd64) and ARM64 (aarch64)
+- Tested on Ubuntu, Debian, Fedora, Raspberry Pi 4+
+
+### One-Line Installer
 ```bash
 curl -sL https://raw.githubusercontent.com/braxius-hq/cipher/main/install.sh | bash
 ```

@@ -36,6 +36,7 @@ if [ -z "$LATEST_URL" ]; then
 fi
 
 curl -#L -o cipher.gz "$LATEST_URL"
+rm -f cipher
 gunzip cipher.gz
 
 chmod +x cipher
