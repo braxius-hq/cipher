@@ -6,8 +6,15 @@
 
 Cipher is an interactive terminal client for secure cloud storage, built with [Ink](https://github.com/vadimdemedes/ink) and [Bun](https://bun.sh). All encryption happens locally on your machine — the server never sees your data or filenames.
 
+## Quick Install
+
+```bash
+curl -sL https://raw.githubusercontent.com/braxius-hq/cipher/main/install.sh | bash
+```
+
 ## Table of Contents
 
+- [Quick Install](#quick-install)
 - [Overview](#overview)
 - [Security Model](#security-model-zero-knowledge-encryption)
 - [Features](#features)
