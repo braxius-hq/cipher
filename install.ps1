@@ -26,6 +26,32 @@ $Target = Join-Path $InstallDir "cipher-cli.exe"
 $CmdShim = Join-Path $InstallDir "cipher.cmd"
 $TempFile = $null
 
+function Remove-OldPowerShellShim {
+    $profiles = @(
+        Join-Path $HOME "Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1",
+        Join-Path $HOME "Documents\PowerShell\Microsoft.PowerShell_profile.ps1"
+    )
+
+    foreach ($profilePath in $profiles) {
+        if (-not (Test-Path $profilePath)) {
+            continue
+        }
+
+        try {
+            $content = Get-Content $profilePath -Raw
+            $next = $content -replace "(?s)\r?\n?# Cipher CLI shim\r?\nfunction cipher \{\r?\n\s*& \"[^\"]+\" @args\r?\n\}\r?\n?", "`n"
+
+            if ($next -ne $content) {
+                Set-Content -Path $profilePath -Value $next.TrimEnd() -Encoding UTF8
+                Write-Host "Removed old PowerShell profile shim from $profilePath" -ForegroundColor Yellow
+            }
+        } catch {
+            Write-Host "Could not clean old PowerShell profile shim at $profilePath" -ForegroundColor Yellow
+            Write-Host "Delete this file manually or allow scripts with: Set-ExecutionPolicy RemoteSigned -Scope CurrentUser" -ForegroundColor Yellow
+        }
+    }
+}
+
 try {
     $arch = $env:PROCESSOR_ARCHITECTURE
     if ($env:PROCESSOR_ARCHITEW6432) {
@@ -35,6 +61,8 @@ try {
     if ($arch -and $arch -ne "AMD64") {
         return Fail "Unsupported architecture $arch. Only Windows x64 is currently supported."
     }
+
+    Remove-OldPowerShellShim
 
     Write-Host "Fetching latest release..."
     $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -UseBasicParsing
@@ -78,10 +106,17 @@ try {
     $isOnPath = $pathItems | Where-Object { $_.TrimEnd("\") -ieq $InstallDir.TrimEnd("\") }
 
     if (-not $isOnPath) {
-        $newPath = if ($userPath) { "$userPath;$InstallDir" } else { $InstallDir }
+        $newPath = if ($userPath) { "$InstallDir;$userPath" } else { $InstallDir }
         [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
         $env:Path = "$env:Path;$InstallDir"
         Write-Host "Added $InstallDir to your user PATH." -ForegroundColor Yellow
+        Write-Host "Open a new terminal before running cipher." -ForegroundColor Yellow
+    } elseif ($pathItems[0].TrimEnd("\") -ine $InstallDir.TrimEnd("\")) {
+        $remainingPath = $pathItems | Where-Object { $_.TrimEnd("\") -ine $InstallDir.TrimEnd("\") }
+        $newPath = "$InstallDir;$($remainingPath -join ';')"
+        [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+        $env:Path = "$InstallDir;$env:Path"
+        Write-Host "Moved $InstallDir to the front of your user PATH." -ForegroundColor Yellow
         Write-Host "Open a new terminal before running cipher." -ForegroundColor Yellow
     }
 
