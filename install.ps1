@@ -28,7 +28,7 @@ $TempFile = $null
 
 function Remove-OldPowerShellShim {
     $profiles = @(
-        Join-Path $HOME "Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1",
+        Join-Path $HOME "Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1"
         Join-Path $HOME "Documents\PowerShell\Microsoft.PowerShell_profile.ps1"
     )
 
