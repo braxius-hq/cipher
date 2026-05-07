@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // SPDX-License-Identifier: AGPL-3.0-only
-import { rmSync, unlinkSync } from "node:fs";
+import { renameSync, rmSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
@@ -18,6 +18,9 @@ const args = process.argv.slice(2);
 function getConfigDir(): string {
 	if (process.platform === "darwin") {
 		return join(homedir(), "Library", "Application Support", "cipher");
+	}
+	if (process.platform === "win32") {
+		return join(homedir(), "AppData", "Roaming", "cipher");
 	}
 	return join(homedir(), ".config", "cipher");
 }
@@ -79,7 +82,21 @@ if (command === "uninstall") {
 
 	sweepResidueSync();
 
-	unlinkSync(process.execPath);
+	if (process.platform === "win32") {
+		try {
+			const doomed = `${process.execPath}.old`;
+			renameSync(process.execPath, doomed);
+			unlinkSync(doomed);
+		} catch {
+			console.log("");
+			console.log(`⚠️  Could not delete ${process.execPath}`);
+			console.log(
+				"   Delete it manually or restart your terminal and try again.",
+			);
+		}
+	} else {
+		unlinkSync(process.execPath);
+	}
 
 	console.log("Cipher completely removed.");
 	process.exit(0);

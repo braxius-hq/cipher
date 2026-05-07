@@ -15,9 +15,23 @@ import { APP_VERSION } from "./version";
 
 const GITHUB_API =
 	"https://api.github.com/repos/braxius-hq/cipher/releases/latest";
-const INSTALL_DIR = join(homedir(), ".local", "bin");
 
-type PlatformTarget = "linux-amd64" | "linux-arm64" | "darwin-arm64";
+type PlatformTarget =
+	| "linux-amd64"
+	| "linux-arm64"
+	| "darwin-arm64"
+	| "windows-amd64";
+
+function getInstallDir(): string {
+	if (process.platform === "win32") {
+		return join(homedir(), "AppData", "Local", "Programs", "cipher");
+	}
+	return join(homedir(), ".local", "bin");
+}
+
+function getBinaryName(): string {
+	return process.platform === "win32" ? "cipher.exe" : "cipher";
+}
 
 interface GitHubAsset {
 	name: string;
@@ -37,14 +51,16 @@ const MACHO_MAGICS = [
 	Buffer.from([0xce, 0xfa, 0xed, 0xfe]),
 	Buffer.from([0xcf, 0xfa, 0xed, 0xfe]),
 ];
+const PE_MAGIC = Buffer.from([0x4d, 0x5a]);
 
 function getPlatformTarget(): PlatformTarget {
 	const { platform, arch } = process;
 	if (platform === "linux" && arch === "x64") return "linux-amd64";
 	if (platform === "linux" && arch === "arm64") return "linux-arm64";
 	if (platform === "darwin" && arch === "arm64") return "darwin-arm64";
+	if (platform === "win32" && arch === "x64") return "windows-amd64";
 	throw new Error(
-		`Unsupported platform: ${platform}-${arch}. Supported: linux-x64, linux-arm64, darwin-arm64.`,
+		`Unsupported platform: ${platform}-${arch}. Supported: linux-x64, linux-arm64, darwin-arm64, windows-x64.`,
 	);
 }
 
@@ -93,7 +109,9 @@ function findAsset(
 	release: GitHubRelease,
 	target: PlatformTarget,
 ): GitHubAsset {
-	const pattern = new RegExp(`cipher-.*-${target}$`);
+	const pattern = target.startsWith("windows-")
+		? new RegExp(`cipher-.*-${target}\\.exe$`)
+		: new RegExp(`cipher-.*-${target}$`);
 	const asset = release.assets.find((a) => pattern.test(a.name));
 	if (!asset) {
 		const supported = release.assets.map((a) => a.name).join(", ");
@@ -170,20 +188,35 @@ function validateBinary(path: string): void {
 			"Downloaded file is not a valid binary. This may be a temporary issue. Try again later.",
 		);
 	}
+	if (process.platform === "win32") {
+		if (buf.equals(PE_MAGIC)) return;
+		throw new Error(
+			"Downloaded file is not a valid binary. This may be a temporary issue. Try again later.",
+		);
+	}
 	throw new Error(`Cannot validate binary on ${process.platform}.`);
 }
 
 function installBinary(tempPath: string): string {
-	chmodSync(tempPath, 0o755);
+	if (process.platform !== "win32") {
+		chmodSync(tempPath, 0o755);
+	}
 
-	const installPath = join(INSTALL_DIR, "cipher");
-	const target =
-		process.execPath === installPath ? process.execPath : installPath;
+	const installDir = getInstallDir();
+	const binaryName = getBinaryName();
+	const target = join(installDir, binaryName);
 
 	mkdirSync(dirname(target), { recursive: true });
 
-	const isStandardLocation = process.execPath === installPath;
-	if (isStandardLocation) {
+	const isStandardLocation = process.execPath === target;
+	if (isStandardLocation && process.platform === "win32") {
+		const doomed = `${target}.old`;
+		renameSync(target, doomed);
+		renameSync(tempPath, target);
+		try {
+			unlinkSync(doomed);
+		} catch {}
+	} else if (isStandardLocation) {
 		renameSync(tempPath, target);
 	} else {
 		try {
@@ -235,14 +268,15 @@ export async function runUpgrade(): Promise<void> {
 
 	const target = getPlatformTarget();
 	const asset = findAsset(release, target);
+	const installDir = getInstallDir();
 
 	console.log(
 		`  Downloading cipher v${latestVersion} for ${target} (${formatBytes(asset.size)})...`,
 	);
 
-	const tempPath = join(INSTALL_DIR, `cipher-${latestVersion}.new`);
+	const tempPath = join(installDir, `cipher-${latestVersion}.new`);
 
-	mkdirSync(INSTALL_DIR, { recursive: true });
+	mkdirSync(installDir, { recursive: true });
 
 	try {
 		await downloadBinary(asset.browser_download_url, tempPath, asset.size);
@@ -271,24 +305,42 @@ export async function runUpgrade(): Promise<void> {
 		process.execPath.includes("cipher")
 	) {
 		try {
-			unlinkSync(process.execPath);
+			if (process.platform === "win32") {
+				const doomed = `${process.execPath}.old`;
+				renameSync(process.execPath, doomed);
+				unlinkSync(doomed);
+			} else {
+				unlinkSync(process.execPath);
+			}
 		} catch {}
 	}
 
 	clearQuarantine(installedPath);
 
-	const isOnPath = process.env.PATH?.split(":").includes(INSTALL_DIR);
+	const pathSep = process.platform === "win32" ? ";" : ":";
+	const isOnPath = process.env.PATH?.split(pathSep).includes(installDir);
+
+	const emoji = process.platform === "win32" ? "[OK]" : "✅";
+	const warn = process.platform === "win32" ? "[!]" : "⚠️";
 
 	console.log("");
-	console.log(`✅ Cipher upgraded to v${latestVersion} at ${installedPath}.`);
+	console.log(
+		`${emoji} Cipher upgraded to v${latestVersion} at ${installedPath}.`,
+	);
 	if (!isOnPath) {
 		console.log("");
-		console.log(`⚠️  ${INSTALL_DIR} is not in your PATH.`);
-		console.log("   Add this to your shell config (~/.bashrc or ~/.zshrc):");
-		console.log("");
-		console.log('   export PATH="$HOME/.local/bin:$PATH"');
-		console.log("");
-		console.log("   Then restart your terminal or run: source ~/.bashrc");
+		console.log(`${warn}  ${installDir} is not in your PATH.`);
+		if (process.platform === "win32") {
+			console.log(
+				"   Add it via: Settings > System > About > Advanced system settings > Environment Variables",
+			);
+		} else {
+			console.log("   Add this to your shell config (~/.bashrc or ~/.zshrc):");
+			console.log("");
+			console.log('   export PATH="$HOME/.local/bin:$PATH"');
+			console.log("");
+			console.log("   Then restart your terminal or run: source ~/.bashrc");
+		}
 	}
 
 	process.exit(0);

@@ -30,7 +30,7 @@ export default function PathInput({ value, onChange, onSubmit }: Props) {
 				let searchDir = value;
 				let partial = "";
 
-				if (!value.endsWith(sep) && value.length > 0) {
+				if (!value.endsWith(sep) && !value.endsWith("/") && value.length > 0) {
 					searchDir = dirname(value);
 					partial = basename(value);
 					if (searchDir === ".") {
@@ -121,7 +121,13 @@ export default function PathInput({ value, onChange, onSubmit }: Props) {
 					{suggestions.map((s) => (
 						<Box key={s.name}>
 							<Text color={s.isDir ? COLORS.ACCENT : COLORS.TEXT_SECONDARY}>
-								{s.isDir ? "📁 " : "📄 "}
+								{process.platform === "win32"
+									? s.isDir
+										? "[DIR]  "
+										: "[FILE] "
+									: s.isDir
+										? "📁 "
+										: "📄 "}
 							</Text>
 							<Text color={s.isDir ? COLORS.ACCENT : COLORS.TEXT_SECONDARY}>
 								{s.name}

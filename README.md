@@ -1,6 +1,6 @@
 # Cipher
 
-**Terminal-based end-to-end encrypted cloud storage.**
+**The encrypted cloud storage from your terminal.**
 
 ![License](https://img.shields.io/badge/License-AGPL_3.0-blue.svg)
 
@@ -11,6 +11,10 @@ Cipher is an interactive terminal client for secure cloud storage, built with [I
 ```bash
 curl -sL https://raw.githubusercontent.com/braxius-hq/cipher/main/install.sh | bash
 ```
+
+### Windows (Beta)
+
+Download the latest `cipher-*-windows-amd64.exe` from [Releases](https://github.com/braxius-hq/cipher/releases).
 
 ## Table of Contents
 
@@ -56,6 +60,7 @@ Cipher implements strict end-to-end encryption. Your data is encrypted locally b
 |----------|-------------|--------|
 | Linux | x64 (amd64), ARM64 (aarch64) | Tested on Ubuntu, Debian, Fedora, Raspberry Pi 4+ |
 | macOS | Apple Silicon (M1/M2/M3/M4) | Not yet tested |
+| Windows | x64 (amd64) | Beta |
 
 ### One-Line Installer
 

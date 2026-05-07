@@ -82,11 +82,12 @@ export default function FileList({
 					const actualIndex = scrollOffset + i;
 					const isSelected = actualIndex === selectedIndex;
 					const isChecked = selectedIds.has(item.id);
-					let icon = "📄";
+					const isWindows = process.platform === "win32";
+					let icon = isWindows ? "[FILE]" : "📄";
 					let baseColor: string | undefined;
 
 					if (item.type === "folder") {
-						icon = "📁";
+						icon = isWindows ? "[DIR]" : "📁";
 						baseColor = COLORS.ACCENT;
 					}
 					if (item.type === "parent") {

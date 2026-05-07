@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { homedir } from "node:os";
+import { sep } from "node:path";
 import { Box, Text, useInput } from "ink";
 import { useEffect, useState } from "react";
 import Dialog from "../components/Dialog";
@@ -243,7 +244,7 @@ export default function FileManagerScreen({ onLogout, latestVersion }: Props) {
 			if (input === "?") setMode("help");
 			if (input.toLowerCase() === "s" && !key.ctrl) setMode("settings");
 			if (input.toLowerCase() === "u") {
-				ops.setInputText(`${homedir()}/`);
+				ops.setInputText(`${homedir()}${sep}`);
 				setMode("upload");
 			}
 			if (input.toLowerCase() === "n") {
