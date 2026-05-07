@@ -25,7 +25,7 @@ try {
         $arch = $env:PROCESSOR_ARCHITEW6432
     }
 
-    if ($arch -ne "AMD64") {
+    if ($arch -and $arch -ne "AMD64") {
         return Fail "Unsupported architecture $arch. Only Windows x64 is currently supported."
     }
 
