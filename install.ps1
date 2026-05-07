@@ -23,33 +23,8 @@ if (-not $env:WT_SESSION) {
 $Repo = "braxius-hq/cipher"
 $InstallDir = Join-Path $env:LOCALAPPDATA "Programs\cipher"
 $Target = Join-Path $InstallDir "cipher-cli.exe"
+$CmdShim = Join-Path $InstallDir "cipher.cmd"
 $TempFile = $null
-
-function Ensure-PowerShellShim($TargetPath) {
-    if (-not $PROFILE) {
-        return
-    }
-
-    $profileDir = Split-Path -Parent $PROFILE
-    New-Item -ItemType Directory -Path $profileDir -Force | Out-Null
-
-    $shim = @"
-
-# Cipher CLI shim
-function cipher {
-    & "$TargetPath" @args
-}
-"@
-
-    if (Test-Path $PROFILE) {
-        $profileContent = Get-Content $PROFILE -Raw
-        if ($profileContent -match "function\s+cipher\s*\{") {
-            return
-        }
-    }
-
-    Add-Content -Path $PROFILE -Value $shim
-}
 
 try {
     $arch = $env:PROCESSOR_ARCHITECTURE
@@ -91,6 +66,7 @@ try {
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     Remove-Item (Join-Path $InstallDir "cipher.exe") -Force -ErrorAction SilentlyContinue
     Move-Item -Path $TempFile -Destination $Target -Force
+    Set-Content -Path $CmdShim -Value "@echo off`r`n`"%~dp0cipher-cli.exe`" %*`r`n" -Encoding ASCII
     $TempFile = $null
 
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
@@ -109,13 +85,11 @@ try {
         Write-Host "Open a new terminal before running cipher." -ForegroundColor Yellow
     }
 
-    Ensure-PowerShellShim $Target
     Set-Alias -Name cipher -Value $Target -Scope Global -Force
 
     Write-Host ""
     Write-Host "Cipher v$version installed to $Target" -ForegroundColor Green
-    Write-Host "PowerShell users can run 'cipher' now or after opening a new terminal."
-    Write-Host "All Windows terminals can run 'cipher-cli'."
+    Write-Host "Run 'cipher' or 'cipher-cli' in a new terminal to get started."
     Read-Host "Press Enter to close"
 } catch {
     if ($TempFile -and (Test-Path $TempFile)) {

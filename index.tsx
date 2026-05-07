@@ -53,6 +53,11 @@ function removeWindowsPowerShellShim(): void {
 	}
 }
 
+function removeWindowsCommandShim(): void {
+	const installDir = join(homedir(), "AppData", "Local", "Programs", "cipher");
+	rmSync(join(installDir, "cipher.cmd"), { force: true });
+}
+
 function removeWindowsPathEntry(): void {
 	const installDir = join(homedir(), "AppData", "Local", "Programs", "cipher");
 	const script = `
@@ -126,6 +131,7 @@ if (command === "uninstall") {
 
 	if (process.platform === "win32") {
 		removeWindowsPowerShellShim();
+		removeWindowsCommandShim();
 		removeWindowsPathEntry();
 
 		try {
