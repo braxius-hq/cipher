@@ -108,7 +108,13 @@ try {
     $TempFile = Join-Path $env:TEMP "cipher-$version.exe"
 
     Write-Host "Downloading Cipher v$version..."
-    Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $TempFile -UseBasicParsing
+    $curlArgs = @("-fL#", "-o", $TempFile, $asset.browser_download_url)
+    $curlProcess = Start-Process -FilePath "curl.exe" -ArgumentList $curlArgs -Wait -NoNewWindow -PassThru
+
+    if ($curlProcess.ExitCode -ne 0) {
+        Remove-Item $TempFile -Force -ErrorAction SilentlyContinue
+        return Fail "Download failed with exit code $($curlProcess.ExitCode)."
+    }
 
     $file = [System.IO.File]::OpenRead($TempFile)
     try {

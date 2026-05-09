@@ -2,12 +2,12 @@
 import {
 	chmodSync,
 	closeSync,
+	createWriteStream,
 	mkdirSync,
 	openSync,
 	readSync,
 	renameSync,
 	unlinkSync,
-	writeSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
 import {
@@ -92,12 +92,6 @@ function findAsset(release: GitHubRelease, target: string): GitHubAsset {
 	return asset;
 }
 
-function formatBytes(bytes: number): string {
-	if (bytes < 1024) return `${bytes} B`;
-	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
 async function downloadBinary(
 	url: string,
 	dest: string,
@@ -111,40 +105,42 @@ async function downloadBinary(
 		throw new Error("Download failed: no response body.");
 	}
 
-	const fd = openSync(dest, "w");
-	let received = 0;
-	let lastPercent = -1;
-
+	const stream = createWriteStream(dest);
 	try {
+		let received = 0;
+		let lastPct = -1;
+
 		const reader = res.body.getReader();
+
 		while (true) {
 			const { done, value } = await reader.read();
 			if (done) break;
-			writeSync(fd, value);
+
+			stream.write(value);
 			received += value.length;
+
 			if (expectedSize > 0) {
 				const pct = Math.floor((received / expectedSize) * 100);
-				if (pct !== lastPercent) {
+				if (pct !== lastPct) {
 					process.stdout.write(`\r  Downloading... ${pct}%`);
-					lastPercent = pct;
+					lastPct = pct;
 				}
 			}
 		}
 	} finally {
-		closeSync(fd);
+		stream.end();
 	}
 
-	process.stdout.write("\r  Downloading... 100%\n");
+	if (expectedSize > 0) {
+		process.stdout.write("\r  Downloading... 100%\n");
+	}
 }
 
 function validateBinary(path: string): void {
 	const fd = openSync(path, "r");
 	const buf = Buffer.alloc(4);
-	try {
-		readSync(fd, buf, 0, 4, 0);
-	} finally {
-		closeSync(fd);
-	}
+	readSync(fd, buf, 0, 4, 0);
+	closeSync(fd);
 
 	const type = validateBinaryMagic(buf);
 	if (type === null) {
@@ -211,9 +207,7 @@ export async function runUpgrade(): Promise<void> {
 	const asset = findAsset(release, target);
 	const installDir = getInstallDir();
 
-	console.log(
-		`  Downloading cipher v${latestVersion} for ${target} (${formatBytes(asset.size)})...`,
-	);
+	console.log(`  Downloading cipher v${latestVersion} for ${target}...`);
 
 	const tempPath = join(installDir, `cipher-${latestVersion}.new`);
 
