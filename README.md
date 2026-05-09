@@ -9,13 +9,13 @@ Cipher is an interactive terminal client for secure cloud storage, built with [I
 ## Quick Install
 
 ```bash
-curl -sL https://raw.githubusercontent.com/braxius-hq/cipher/main/install.sh | bash
+curl -sL https://raw.githubusercontent.com/braxiushq/cipher/main/install.sh | bash
 ```
 
 ### Windows (Beta)
 
 ```powershell
-irm https://raw.githubusercontent.com/braxius-hq/cipher/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/braxiushq/cipher/main/install.ps1 | iex
 ```
 
 On Windows, the installer also provides `cipher-cli` because `cipher` is a built-in Windows command.
@@ -71,13 +71,13 @@ Cipher implements strict end-to-end encryption. Your data is encrypted locally b
 **Linux / macOS:**
 
 ```bash
-curl -sL https://raw.githubusercontent.com/braxius-hq/cipher/main/install.sh | bash
+curl -sL https://raw.githubusercontent.com/braxiushq/cipher/main/install.sh | bash
 ```
 
 **Windows (PowerShell):**
 
 ```powershell
-irm https://raw.githubusercontent.com/braxius-hq/cipher/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/braxiushq/cipher/main/install.ps1 | iex
 ```
 
 Windows users can run `cipher` from PowerShell after opening a new terminal, or `cipher-cli` from any terminal.
@@ -85,7 +85,7 @@ Windows users can run `cipher` from PowerShell after opening a new terminal, or 
 ### From Source (Requires Bun)
 
 ```bash
-git clone https://github.com/braxius-hq/cipher.git cipher
+git clone https://github.com/braxiushq/cipher.git cipher
 cd cipher
 bun install
 bun run dev

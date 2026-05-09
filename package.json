@@ -29,5 +29,5 @@
 	"description": "An end-to-end encrypted (E2EE) cloud storage client.",
 	"author": "Braxius",
 	"license": "AGPL-3.0-only",
-	"repository": "github:braxius-hq/cipher"
+	"repository": "github:braxiushq/cipher"
 }

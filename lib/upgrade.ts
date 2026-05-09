@@ -14,7 +14,7 @@ import { dirname, join } from "node:path";
 import { APP_VERSION } from "./version";
 
 const GITHUB_API =
-	"https://api.github.com/repos/braxius-hq/cipher/releases/latest";
+	"https://api.github.com/repos/braxiushq/cipher/releases/latest";
 
 type PlatformTarget =
 	| "linux-amd64"

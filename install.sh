@@ -34,7 +34,7 @@ case "$OS" in
 		;;
 esac
 
-REPO="braxius-hq/cipher"
+REPO="braxiushq/cipher"
 INSTALL_DIR="${HOME}/.local/bin"
 
 TMPDIR="$(mktemp -d)"

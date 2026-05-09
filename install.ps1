@@ -20,7 +20,7 @@ if (-not $env:WT_SESSION) {
     Write-Host ""
 }
 
-$Repo = "braxius-hq/cipher"
+$Repo = "braxiushq/cipher"
 $InstallDir = Join-Path $env:LOCALAPPDATA "Programs\cipher"
 $Target = Join-Path $InstallDir "cipher-cli.exe"
 $CmdShim = Join-Path $InstallDir "cipher.cmd"
@@ -61,8 +61,21 @@ function Remove-OldPowerShellShim {
             }
 
             if ($changed) {
-                Set-Content -Path $profilePath -Value $next.ToArray() -Encoding UTF8
-                Write-Host "Removed old PowerShell profile shim from $profilePath" -ForegroundColor Yellow
+                $isEmpty = $true
+                foreach ($line in $next) {
+                    if (-not [string]::IsNullOrWhiteSpace($line)) {
+                        $isEmpty = $false
+                        break
+                    }
+                }
+
+                if ($isEmpty) {
+                    Remove-Item -Path $profilePath -Force
+                    Write-Host "Removed empty PowerShell profile at $profilePath" -ForegroundColor Yellow
+                } else {
+                    Set-Content -Path $profilePath -Value $next.ToArray() -Encoding UTF8
+                    Write-Host "Removed old PowerShell profile shim from $profilePath" -ForegroundColor Yellow
+                }
             }
         } catch {
             Write-Host "Could not clean old PowerShell profile shim at $profilePath" -ForegroundColor Yellow
