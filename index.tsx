@@ -1,13 +1,6 @@
 #!/usr/bin/env bun
 // SPDX-License-Identifier: AGPL-3.0-only
-import {
-	existsSync,
-	readFileSync,
-	renameSync,
-	rmSync,
-	unlinkSync,
-	writeFileSync,
-} from "node:fs";
+import { renameSync, rmSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import {
 	cleanupSensitivePathsSync,
@@ -21,33 +14,6 @@ import { runUpgrade } from "./lib/upgrade";
 import { APP_VERSION } from "./lib/version";
 
 const args = process.argv.slice(2);
-
-function removeWindowsPowerShellShim(): void {
-	if (!isWindows()) return;
-
-	const docsBase = join(
-		process.env.USERPROFILE ?? process.env.HOME ?? "",
-		"Documents",
-	);
-	const profiles = [
-		join(docsBase, "WindowsPowerShell", "Microsoft.PowerShell_profile.ps1"),
-		join(docsBase, "PowerShell", "Microsoft.PowerShell_profile.ps1"),
-	];
-
-	for (const profile of profiles) {
-		if (!existsSync(profile)) continue;
-
-		const content = readFileSync(profile, "utf8");
-		const next = content.replace(
-			/\r?\n?# Cipher CLI shim\r?\nfunction cipher \{\r?\n\s*& "[^"]+" @args\r?\n\}\r?\n?/g,
-			"\n",
-		);
-
-		if (next !== content) {
-			writeFileSync(profile, next.trimEnd() ? `${next.trimEnd()}\n` : "");
-		}
-	}
-}
 
 function removeWindowsCommandShim(): void {
 	const installDir = getInstallDir();
@@ -127,7 +93,6 @@ if (command === "uninstall") {
 	sweepResidueSync();
 
 	if (isWindows()) {
-		removeWindowsPowerShellShim();
 		removeWindowsCommandShim();
 		removeWindowsPathEntry();
 
