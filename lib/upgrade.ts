@@ -9,29 +9,22 @@ import {
 	unlinkSync,
 	writeSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import {
+	clearQuarantine,
+	getBinaryName,
+	getEmoji,
+	getInstallDir,
+	getUpgradeTarget,
+	isOnPath,
+	isWindows,
+	shouldChmod,
+	validateBinaryMagic,
+} from "./platform";
 import { APP_VERSION } from "./version";
 
 const GITHUB_API =
 	"https://api.github.com/repos/braxiushq/cipher/releases/latest";
-
-type PlatformTarget =
-	| "linux-amd64"
-	| "linux-arm64"
-	| "darwin-arm64"
-	| "windows-amd64";
-
-function getInstallDir(): string {
-	if (process.platform === "win32") {
-		return join(homedir(), "AppData", "Local", "Programs", "cipher");
-	}
-	return join(homedir(), ".local", "bin");
-}
-
-function getBinaryName(): string {
-	return process.platform === "win32" ? "cipher-cli.exe" : "cipher";
-}
 
 interface GitHubAsset {
 	name: string;
@@ -42,26 +35,6 @@ interface GitHubAsset {
 interface GitHubRelease {
 	tag_name: string;
 	assets: GitHubAsset[];
-}
-
-const ELF_MAGIC = Buffer.from([0x7f, 0x45, 0x4c, 0x46]);
-const MACHO_MAGICS = [
-	Buffer.from([0xfe, 0xed, 0xfa, 0xce]),
-	Buffer.from([0xfe, 0xed, 0xfa, 0xcf]),
-	Buffer.from([0xce, 0xfa, 0xed, 0xfe]),
-	Buffer.from([0xcf, 0xfa, 0xed, 0xfe]),
-];
-const PE_MAGIC = Buffer.from([0x4d, 0x5a]);
-
-function getPlatformTarget(): PlatformTarget {
-	const { platform, arch } = process;
-	if (platform === "linux" && arch === "x64") return "linux-amd64";
-	if (platform === "linux" && arch === "arm64") return "linux-arm64";
-	if (platform === "darwin" && arch === "arm64") return "darwin-arm64";
-	if (platform === "win32" && arch === "x64") return "windows-amd64";
-	throw new Error(
-		`Unsupported platform: ${platform}-${arch}. Supported: linux-x64, linux-arm64, darwin-arm64, windows-x64.`,
-	);
 }
 
 async function fetchLatestRelease(): Promise<GitHubRelease> {
@@ -105,10 +78,7 @@ async function fetchLatestReleaseWithTimeout(
 	}
 }
 
-function findAsset(
-	release: GitHubRelease,
-	target: PlatformTarget,
-): GitHubAsset {
+function findAsset(release: GitHubRelease, target: string): GitHubAsset {
 	const pattern = target.startsWith("windows-")
 		? new RegExp(`cipher-.*-${target}\\.exe$`)
 		: new RegExp(`cipher-.*-${target}$`);
@@ -176,29 +146,16 @@ function validateBinary(path: string): void {
 		closeSync(fd);
 	}
 
-	if (process.platform === "linux") {
-		if (buf.equals(ELF_MAGIC)) return;
+	const type = validateBinaryMagic(buf);
+	if (type === null) {
 		throw new Error(
 			"Downloaded file is not a valid binary. This may be a temporary issue. Try again later.",
 		);
 	}
-	if (process.platform === "darwin") {
-		if (MACHO_MAGICS.some((m) => buf.equals(m))) return;
-		throw new Error(
-			"Downloaded file is not a valid binary. This may be a temporary issue. Try again later.",
-		);
-	}
-	if (process.platform === "win32") {
-		if (buf.subarray(0, PE_MAGIC.length).equals(PE_MAGIC)) return;
-		throw new Error(
-			"Downloaded file is not a valid binary. This may be a temporary issue. Try again later.",
-		);
-	}
-	throw new Error(`Cannot validate binary on ${process.platform}.`);
 }
 
 function installBinary(tempPath: string): string {
-	if (process.platform !== "win32") {
+	if (shouldChmod()) {
 		chmodSync(tempPath, 0o755);
 	}
 
@@ -209,7 +166,7 @@ function installBinary(tempPath: string): string {
 	mkdirSync(dirname(target), { recursive: true });
 
 	const isStandardLocation = process.execPath === target;
-	if (isStandardLocation && process.platform === "win32") {
+	if (isStandardLocation && isWindows()) {
 		const doomed = `${target}.old`;
 		renameSync(target, doomed);
 		renameSync(tempPath, target);
@@ -232,22 +189,6 @@ function installBinary(tempPath: string): string {
 	return target;
 }
 
-function clearQuarantine(binaryPath: string): void {
-	if (process.platform !== "darwin") return;
-	try {
-		const proc = Bun.spawnSync(["xattr", "-cr", binaryPath]);
-		if (proc.exitCode !== 0) {
-			console.log(
-				`  Run this command to clear macOS Gatekeeper: xattr -cr ${binaryPath}`,
-			);
-		}
-	} catch {
-		console.log(
-			`  Run this command to clear macOS Gatekeeper: xattr -cr ${binaryPath}`,
-		);
-	}
-}
-
 export async function runUpgrade(): Promise<void> {
 	if (APP_VERSION === "0.0.0-dev") {
 		console.error("Cannot upgrade a development build.");
@@ -266,7 +207,7 @@ export async function runUpgrade(): Promise<void> {
 
 	console.log(`Upgrading from v${APP_VERSION} to v${latestVersion}...`);
 
-	const target = getPlatformTarget();
+	const target = getUpgradeTarget();
 	const asset = findAsset(release, target);
 	const installDir = getInstallDir();
 
@@ -305,7 +246,7 @@ export async function runUpgrade(): Promise<void> {
 		process.execPath.includes("cipher")
 	) {
 		try {
-			if (process.platform === "win32") {
+			if (isWindows()) {
 				const doomed = `${process.execPath}.old`;
 				renameSync(process.execPath, doomed);
 				unlinkSync(doomed);
@@ -317,20 +258,16 @@ export async function runUpgrade(): Promise<void> {
 
 	clearQuarantine(installedPath);
 
-	const pathSep = process.platform === "win32" ? ";" : ":";
-	const isOnPath = process.env.PATH?.split(pathSep).includes(installDir);
-
-	const emoji = process.platform === "win32" ? "[OK]" : "✅";
-	const warn = process.platform === "win32" ? "[!]" : "⚠️";
+	const onPath = isOnPath();
 
 	console.log("");
 	console.log(
-		`${emoji} Cipher upgraded to v${latestVersion} at ${installedPath}.`,
+		`${getEmoji("✅")} Cipher upgraded to v${latestVersion} at ${installedPath}.`,
 	);
-	if (!isOnPath) {
+	if (!onPath) {
 		console.log("");
-		console.log(`${warn}  ${installDir} is not in your PATH.`);
-		if (process.platform === "win32") {
+		console.log(`${getEmoji("⚠️")}  ${installDir} is not in your PATH.`);
+		if (isWindows()) {
 			console.log(
 				"   Add it via: Settings > System > About > Advanced system settings > Environment Variables",
 			);

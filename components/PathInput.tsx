@@ -6,6 +6,7 @@ import { basename, dirname, join, sep } from "node:path";
 import { Box, Text, useInput } from "ink";
 import { useState } from "react";
 import { COLORS } from "../lib/colors";
+import { isWindows } from "../lib/platform";
 import { TextInput } from "./ui";
 
 interface Props {
@@ -121,7 +122,7 @@ export default function PathInput({ value, onChange, onSubmit }: Props) {
 					{suggestions.map((s) => (
 						<Box key={s.name}>
 							<Text color={s.isDir ? COLORS.ACCENT : COLORS.TEXT_SECONDARY}>
-								{process.platform === "win32"
+								{isWindows()
 									? s.isDir
 										? "[DIR]  "
 										: "[FILE] "

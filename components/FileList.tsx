@@ -2,6 +2,7 @@
 import { Box, Text } from "ink";
 import { COLORS } from "../lib/colors";
 import { formatBytes } from "../lib/formatting";
+import { isWindows } from "../lib/platform";
 import type { DisplayItem, SortDir, SortKey } from "../lib/types";
 
 interface Props {
@@ -82,12 +83,12 @@ export default function FileList({
 					const actualIndex = scrollOffset + i;
 					const isSelected = actualIndex === selectedIndex;
 					const isChecked = selectedIds.has(item.id);
-					const isWindows = process.platform === "win32";
-					let icon = isWindows ? "[FILE]" : "📄";
+					const win = isWindows();
+					let icon = win ? "[FILE]" : "📄";
 					let baseColor: string | undefined;
 
 					if (item.type === "folder") {
-						icon = isWindows ? "[DIR]" : "📁";
+						icon = win ? "[DIR]" : "📁";
 						baseColor = COLORS.ACCENT;
 					}
 					if (item.type === "parent") {

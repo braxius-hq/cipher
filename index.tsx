@@ -8,7 +8,6 @@ import {
 	unlinkSync,
 	writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import {
 	cleanupSensitivePathsSync,
@@ -17,25 +16,22 @@ import {
 	sweepResidueSync,
 } from "./lib/cleanup";
 import { clearAuth, resetConfig, setBaseUrl } from "./lib/config";
+import { getConfigDir, getInstallDir, isWindows } from "./lib/platform";
 import { runUpgrade } from "./lib/upgrade";
 import { APP_VERSION } from "./lib/version";
 
 const args = process.argv.slice(2);
 
-function getConfigDir(): string {
-	if (process.platform === "darwin") {
-		return join(homedir(), "Library", "Application Support", "cipher");
-	}
-	if (process.platform === "win32") {
-		return join(homedir(), "AppData", "Roaming", "cipher");
-	}
-	return join(homedir(), ".config", "cipher");
-}
-
 function removeWindowsPowerShellShim(): void {
+	if (!isWindows()) return;
+
+	const docsBase = join(
+		process.env.USERPROFILE ?? process.env.HOME ?? "",
+		"Documents",
+	);
 	const profiles = [
-		join(homedir(), "Documents", "WindowsPowerShell", "Microsoft.PowerShell_profile.ps1"),
-		join(homedir(), "Documents", "PowerShell", "Microsoft.PowerShell_profile.ps1"),
+		join(docsBase, "WindowsPowerShell", "Microsoft.PowerShell_profile.ps1"),
+		join(docsBase, "PowerShell", "Microsoft.PowerShell_profile.ps1"),
 	];
 
 	for (const profile of profiles) {
@@ -54,12 +50,12 @@ function removeWindowsPowerShellShim(): void {
 }
 
 function removeWindowsCommandShim(): void {
-	const installDir = join(homedir(), "AppData", "Local", "Programs", "cipher");
+	const installDir = getInstallDir();
 	rmSync(join(installDir, "cipher.cmd"), { force: true });
 }
 
 function removeWindowsPathEntry(): void {
-	const installDir = join(homedir(), "AppData", "Local", "Programs", "cipher");
+	const installDir = getInstallDir();
 	const script = `
 $install = '${installDir.replaceAll("'", "''")}';
 $path = [Environment]::GetEnvironmentVariable('Path', 'User');
@@ -71,6 +67,7 @@ if ($path) {
 
 	Bun.spawnSync(["powershell.exe", "-NoProfile", "-Command", script]);
 }
+
 const command = args[0];
 
 if (command === "version") {
@@ -80,9 +77,9 @@ if (command === "version") {
 
 if (command === "help") {
 	console.log(`
-Cipher — Encrypted. Private. Yours.
+The encrypted cloud storage from your terminal.
 
-An end-to-end encrypted cloud storage client for the terminal.
+Encrypted. Private. Yours.
 
 Usage: cipher <command> [options]
 
@@ -129,7 +126,7 @@ if (command === "uninstall") {
 
 	sweepResidueSync();
 
-	if (process.platform === "win32") {
+	if (isWindows()) {
 		removeWindowsPowerShellShim();
 		removeWindowsCommandShim();
 		removeWindowsPathEntry();

@@ -41,7 +41,9 @@ export default function WelcomeScreen({
  ╚═════╝╚═╝╚═╝     ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝`}
 					</Text>
 					<Box marginTop={1}>
-						<Text dimColor>Encrypted. Private. Yours.</Text>
+						<Text dimColor>
+							The encrypted cloud storage from your terminal.
+						</Text>
 					</Box>
 				</Box>
 				<Box marginTop={1}>
