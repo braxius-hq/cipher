@@ -8,20 +8,19 @@ const SERVICE_NAME = "cipher";
 
 // ── Non-sensitive config (plaintext JSON, safe to store on disk) ─────────
 
-const config = new Conf<{ baseUrl: string; downloadDir: string }>({
+const config = new Conf<{ customBaseUrl?: string; downloadDir: string }>({
 	projectName: CONF_PROJECT_NAME,
 	defaults: {
-		baseUrl: DEFAULT_BASE_URL,
 		downloadDir: "",
 	},
 });
 
 export function getBaseUrl(): string {
-	return config.get("baseUrl");
+	return config.get("customBaseUrl") || DEFAULT_BASE_URL;
 }
 
 export function setBaseUrl(url: string): void {
-	config.set("baseUrl", url);
+	config.set("customBaseUrl", url);
 }
 
 export function getDownloadDir(): string {
