@@ -48,6 +48,7 @@ const SECURE_KEYS = [
 	"salt",
 	"iv",
 	"masterKey",
+	"rootFolderKey",
 ] as const;
 
 type SecureKey = (typeof SECURE_KEYS)[number];
@@ -133,6 +134,14 @@ export async function getMasterKey(): Promise<string> {
 
 export async function setMasterKey(key: string): Promise<void> {
 	await setSecure("masterKey", key);
+}
+
+export async function getRootFolderKey(): Promise<string> {
+	return getSecure("rootFolderKey");
+}
+
+export async function setRootFolderKey(key: string): Promise<void> {
+	await setSecure("rootFolderKey", key);
 }
 
 export async function clearAuth(): Promise<void> {

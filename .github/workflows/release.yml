@@ -28,19 +28,19 @@ jobs:
 
       - name: Build Linux (amd64)
         run: |
-          bun build --compile --minify --sourcemap --target=bun-linux-x64-modern --define 'process.env.APP_VERSION="${{ env.APP_VERSION }}"' index.tsx --outfile cipher-${{ github.ref_name }}-linux-amd64
+          bun build --compile --minify --sourcemap --target=bun-linux-x64-modern --define 'process.env.APP_VERSION="${{ env.APP_VERSION }}"' --define 'process.env.NODE_ENV="\"production\""' index.tsx --outfile cipher-${{ github.ref_name }}-linux-amd64
 
       - name: Build Linux (arm64)
         run: |
-          bun build --compile --minify --sourcemap --target=bun-linux-arm64 --define 'process.env.APP_VERSION="${{ env.APP_VERSION }}"' index.tsx --outfile cipher-${{ github.ref_name }}-linux-arm64
+          bun build --compile --minify --sourcemap --target=bun-linux-arm64 --define 'process.env.APP_VERSION="${{ env.APP_VERSION }}"' --define 'process.env.NODE_ENV="\"production\""' index.tsx --outfile cipher-${{ github.ref_name }}-linux-arm64
 
       - name: Build macOS (arm64)
         run: |
-          bun build --compile --minify --sourcemap --target=bun-darwin-arm64 --define 'process.env.APP_VERSION="${{ env.APP_VERSION }}"' index.tsx --outfile cipher-${{ github.ref_name }}-darwin-arm64
+          bun build --compile --minify --sourcemap --target=bun-darwin-arm64 --define 'process.env.APP_VERSION="${{ env.APP_VERSION }}"' --define 'process.env.NODE_ENV="\"production\""' index.tsx --outfile cipher-${{ github.ref_name }}-darwin-arm64
 
       - name: Build Windows (amd64)
         run: |
-          bun build --compile --minify --sourcemap --target=bun-windows-x64-modern --define 'process.env.APP_VERSION="${{ env.APP_VERSION }}"' index.tsx --outfile cipher-${{ github.ref_name }}-windows-amd64.exe
+          bun build --compile --minify --sourcemap --target=bun-windows-x64-modern --define 'process.env.APP_VERSION="${{ env.APP_VERSION }}"' --define 'process.env.NODE_ENV="\"production\""' index.tsx --outfile cipher-${{ github.ref_name }}-windows-amd64.exe
 
       - name: Release
         uses: softprops/action-gh-release@v2

@@ -13,7 +13,10 @@ const BASE_IV_LENGTH = 12;
 
 export function getEncryptedFileSize(rawSize: number) {
 	return (
-		BASE_IV_LENGTH + rawSize + Math.ceil(rawSize / CHUNK_SIZE) * AUTH_TAG_LENGTH
+		BASE_IV_LENGTH +
+		rawSize +
+		Math.floor(rawSize / CHUNK_SIZE) * AUTH_TAG_LENGTH +
+		AUTH_TAG_LENGTH
 	);
 }
 
@@ -26,6 +29,7 @@ function createEncryptTransform(
 	let chunkIndex = 0;
 	let bytesRead = 0;
 	let wroteBaseIv = false;
+	let internalBuffer = Buffer.alloc(0);
 
 	return new Transform({
 		transform(chunk: Buffer, _encoding, callback) {
@@ -35,32 +39,61 @@ function createEncryptTransform(
 			bytesRead += chunk.length;
 			if (onProgress) onProgress(bytesRead);
 
+			internalBuffer = Buffer.concat([internalBuffer, chunk]);
+
+			try {
+				while (internalBuffer.length >= CHUNK_SIZE) {
+					const chunkToProcess = internalBuffer.subarray(0, CHUNK_SIZE);
+					internalBuffer = internalBuffer.subarray(CHUNK_SIZE);
+
+					const chunkIv = Buffer.from(baseIv);
+					const currentCounter = chunkIv.readUInt32LE(8);
+					chunkIv.writeUInt32LE((currentCounter ^ chunkIndex) >>> 0, 8);
+
+					const cipher = createCipheriv("aes-256-gcm", fileKey, chunkIv);
+					cipher.setAAD(Buffer.from([0])); // intermediate
+					const encryptedChunk = Buffer.concat([
+						cipher.update(chunkToProcess),
+						cipher.final(),
+						cipher.getAuthTag(),
+					]);
+
+					chunkIndex++;
+					if (!wroteBaseIv) {
+						wroteBaseIv = true;
+						this.push(Buffer.concat([baseIv, encryptedChunk]));
+					} else {
+						this.push(encryptedChunk);
+					}
+				}
+				callback();
+			} catch (err) {
+				callback(err as Error);
+			}
+		},
+		flush(callback) {
 			try {
 				const chunkIv = Buffer.from(baseIv);
 				const currentCounter = chunkIv.readUInt32LE(8);
 				chunkIv.writeUInt32LE((currentCounter ^ chunkIndex) >>> 0, 8);
 
 				const cipher = createCipheriv("aes-256-gcm", fileKey, chunkIv);
+				cipher.setAAD(Buffer.from([1])); // final
 				const encryptedChunk = Buffer.concat([
-					cipher.update(chunk),
+					cipher.update(internalBuffer),
 					cipher.final(),
 					cipher.getAuthTag(),
 				]);
 
-				chunkIndex++;
 				if (!wroteBaseIv) {
-					wroteBaseIv = true;
-					callback(null, Buffer.concat([baseIv, encryptedChunk]));
-					return;
+					this.push(Buffer.concat([baseIv, encryptedChunk]));
+				} else {
+					this.push(encryptedChunk);
 				}
-				callback(null, encryptedChunk);
+				callback();
 			} catch (err) {
 				callback(err as Error);
 			}
-		},
-		flush(callback) {
-			if (!wroteBaseIv) this.push(baseIv);
-			callback();
 		},
 	});
 }
@@ -109,6 +142,7 @@ function createDecryptTransform(
 					const ciphertext = chunkToProcess.subarray(0, -AUTH_TAG_LENGTH);
 
 					const decipher = createDecipheriv("aes-256-gcm", fileKey, chunkIv);
+					decipher.setAAD(Buffer.from([0])); // intermediate
 					decipher.setAuthTag(tag);
 
 					this.push(
@@ -123,25 +157,24 @@ function createDecryptTransform(
 		},
 		flush(callback) {
 			try {
-				if (internalBuffer.length > 0) {
-					if (!baseIv) throw new Error("Base IV not found");
-					if (internalBuffer.length < AUTH_TAG_LENGTH)
-						throw new Error("Invalid encrypted chunk");
+				if (!baseIv) throw new Error("Base IV not found");
+				if (internalBuffer.length < AUTH_TAG_LENGTH)
+					throw new Error("File truncated or invalid");
 
-					const chunkIv = Buffer.from(baseIv);
-					const currentCounter = chunkIv.readUInt32LE(8);
-					chunkIv.writeUInt32LE((currentCounter ^ chunkIndex) >>> 0, 8);
+				const chunkIv = Buffer.from(baseIv);
+				const currentCounter = chunkIv.readUInt32LE(8);
+				chunkIv.writeUInt32LE((currentCounter ^ chunkIndex) >>> 0, 8);
 
-					const tag = internalBuffer.subarray(-AUTH_TAG_LENGTH);
-					const ciphertext = internalBuffer.subarray(0, -AUTH_TAG_LENGTH);
+				const tag = internalBuffer.subarray(-AUTH_TAG_LENGTH);
+				const ciphertext = internalBuffer.subarray(0, -AUTH_TAG_LENGTH);
 
-					const decipher = createDecipheriv("aes-256-gcm", fileKey, chunkIv);
-					decipher.setAuthTag(tag);
+				const decipher = createDecipheriv("aes-256-gcm", fileKey, chunkIv);
+				decipher.setAAD(Buffer.from([1])); // final chunk
+				decipher.setAuthTag(tag);
 
-					this.push(
-						Buffer.concat([decipher.update(ciphertext), decipher.final()]),
-					);
-				}
+				this.push(
+					Buffer.concat([decipher.update(ciphertext), decipher.final()]),
+				);
 				callback();
 			} catch (err) {
 				callback(err as Error);
@@ -162,14 +195,6 @@ export function createEncryptedFileStream(
 	);
 }
 
-/**
- * Decrypts a stream and writes to outputPath.
- *
- * IMPORTANT: This writes directly to outputPath — it is NOT atomic.
- * Callers MUST pass a temporary `.part` path and atomically rename
- * the result after this function resolves. On failure, callers must
- * securely delete the partial file.
- */
 export async function decryptStreamToFile(
 	inputStream: Readable,
 	outputPath: string,
@@ -189,13 +214,58 @@ export async function decryptStreamToFile(
 }
 
 /**
- * Encrypt a string (like a filename) using the user's master key.
- * Master key is symmetric (AES-GCM).
+ * Wrap a symmetric key (like a FileKey or a child FolderKey) with a parent key.
  */
-export function encryptMetadata(plainText: string, masterKeyHex: string) {
-	const masterKeyBytes = Buffer.from(masterKeyHex, "hex");
+export function wrapKey(keyToWrap: Buffer, wrappingKey: Buffer, aad?: string) {
 	const iv = randomBytes(12);
-	const cipher = createCipheriv("aes-256-gcm", masterKeyBytes, iv);
+	const cipher = createCipheriv("aes-256-gcm", wrappingKey, iv);
+	if (aad) cipher.setAAD(Buffer.from(aad, "utf8"));
+
+	const enc = Buffer.concat([
+		cipher.update(keyToWrap),
+		cipher.final(),
+		cipher.getAuthTag(),
+	]);
+
+	return {
+		encKeyHex: enc.toString("hex"),
+		ivHex: iv.toString("hex"),
+	};
+}
+
+/**
+ * Unwrap a symmetric key with its parent key.
+ */
+export function unwrapKey(
+	encKeyHex: string,
+	ivHex: string,
+	wrappingKey: Buffer,
+	aad?: string,
+) {
+	const iv = Buffer.from(ivHex, "hex");
+	const encData = Buffer.from(encKeyHex, "hex");
+
+	const tag = encData.subarray(-16);
+	const ciphertext = encData.subarray(0, -16);
+
+	const decipher = createDecipheriv("aes-256-gcm", wrappingKey, iv);
+	if (aad) decipher.setAAD(Buffer.from(aad, "utf8"));
+	decipher.setAuthTag(tag);
+
+	return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+}
+
+/**
+ * Encrypt a string (like a filename) using the folder key.
+ */
+export function encryptMetadata(
+	plainText: string,
+	folderKeyBytes: Buffer,
+	aad?: string,
+) {
+	const iv = randomBytes(12);
+	const cipher = createCipheriv("aes-256-gcm", folderKeyBytes, iv);
+	if (aad) cipher.setAAD(Buffer.from(aad, "utf8"));
 
 	const enc = Buffer.concat([
 		cipher.update(Buffer.from(plainText, "utf8")),
@@ -210,22 +280,23 @@ export function encryptMetadata(plainText: string, masterKeyHex: string) {
 }
 
 /**
- * Decrypt a string (like a filename) using the user's master key.
+ * Decrypt a string (like a filename) using the folder key.
  */
 export function decryptMetadata(
 	encHex: string,
 	ivHex: string,
-	masterKeyHex: string,
+	folderKeyBytes: Buffer,
+	aad?: string,
 ) {
 	try {
-		const masterKeyBytes = Buffer.from(masterKeyHex, "hex");
 		const iv = Buffer.from(ivHex, "hex");
 		const encData = Buffer.from(encHex, "hex");
 
 		const tag = encData.subarray(-16);
 		const ciphertext = encData.subarray(0, -16);
 
-		const decipher = createDecipheriv("aes-256-gcm", masterKeyBytes, iv);
+		const decipher = createDecipheriv("aes-256-gcm", folderKeyBytes, iv);
+		if (aad) decipher.setAAD(Buffer.from(aad, "utf8"));
 		decipher.setAuthTag(tag);
 
 		const dec = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
@@ -236,33 +307,18 @@ export function decryptMetadata(
 }
 
 /**
- * Generates a random 32-byte AES-GCM key for encrypting a specific file.
+ * Generates a random 32-byte AES-GCM key for encrypting a specific file or folder.
  */
 export function generateFileKey() {
 	return randomBytes(32);
 }
+export const generateFolderKey = generateFileKey;
 
 /**
  * Generate a random 12-byte base IV for file encryption.
  */
 export function getBaseIv() {
 	return randomBytes(12);
-}
-
-/**
- * Encrypt the symmetric file key using the user's public key (libsodium sealed box).
- */
-export async function encryptFileKeyWithPublicKey(
-	fileKey: Buffer,
-	publicKeyHex: string,
-) {
-	await sodium.ready;
-	const pubKeyBytes = Buffer.from(publicKeyHex, "hex");
-	const sealed = sodium.crypto_box_seal(
-		new Uint8Array(fileKey),
-		new Uint8Array(pubKeyBytes),
-	);
-	return Buffer.from(sealed).toString("hex");
 }
 
 /**
@@ -287,15 +343,6 @@ export async function decryptFileKeyWithPrivateKey(
 	return Buffer.from(decrypted);
 }
 
-/**
- * Encrypt a file sequentially using AES-GCM in chunks.
- * We XOR the chunk index into the IV to ensure unique nonces per chunk.
- * Handles backpressure cleanly via Transform stream to avoid OOM on huge files.
- *
- * IMPORTANT: This writes directly to outputPath — it is NOT atomic.
- * On failure, a partial encrypted file may remain. Callers should use
- * a temp path and rename on success, or clean up on failure.
- */
 export async function encryptFile(
 	inputPath: string,
 	outputPath: string,
@@ -307,52 +354,25 @@ export async function encryptFile(
 	const readStream = createReadStream(inputPath, { highWaterMark: CHUNK_SIZE });
 	const writeStream = createWriteStream(outputPath);
 
-	let chunkIndex = 0;
 	let totalBytesWritten = 0;
-	let bytesRead = 0;
-
-	// Write base IV at the start of the file
-	writeStream.write(baseIv);
-	totalBytesWritten += baseIv.length;
-
-	const encryptTransform = new Transform({
-		transform(chunk: Buffer, _encoding, callback) {
-			if (signal?.aborted)
-				return callback(new DOMException("Operation cancelled", "AbortError"));
-
-			bytesRead += chunk.length;
-			if (onProgress) onProgress(bytesRead);
-
-			try {
-				const chunkIv = Buffer.from(baseIv);
-				const currentCounter = chunkIv.readUInt32LE(8);
-				chunkIv.writeUInt32LE((currentCounter ^ chunkIndex) >>> 0, 8);
-
-				const cipher = createCipheriv("aes-256-gcm", fileKey, chunkIv);
-				const encryptedChunk = Buffer.concat([
-					cipher.update(chunk),
-					cipher.final(),
-					cipher.getAuthTag(),
-				]);
-
-				totalBytesWritten += encryptedChunk.length;
-				chunkIndex++;
-
-				callback(null, encryptedChunk);
-			} catch (err) {
-				callback(err as Error);
-			}
+	const sizeTracker = new Transform({
+		transform(chunk, _enc, cb) {
+			totalBytesWritten += chunk.length;
+			cb(null, chunk);
 		},
 	});
 
-	await pipeline(readStream, encryptTransform, writeStream, { signal });
+	await pipeline(
+		readStream,
+		createEncryptTransform(fileKey, baseIv, onProgress, signal),
+		sizeTracker,
+		writeStream,
+		{ signal },
+	);
+
 	return { size: totalBytesWritten };
 }
 
-/**
- * Decrypt a chunked AES-GCM file.
- * Handles backpressure cleanly via Transform stream to avoid OOM on huge files.
- */
 export async function decryptFile(
 	inputPath: string,
 	outputPath: string,
@@ -361,93 +381,18 @@ export async function decryptFile(
 	signal?: AbortSignal,
 ) {
 	const stats = await stat(inputPath);
-	if (stats.size < 12) throw new Error("File too small to contain IV");
+	if (stats.size < BASE_IV_LENGTH + AUTH_TAG_LENGTH)
+		throw new Error("File too small");
 
-	const encChunkSize = CHUNK_SIZE + AUTH_TAG_LENGTH;
-	const readStream = createReadStream(inputPath);
+	const readStream = createReadStream(inputPath, {
+		highWaterMark: CHUNK_SIZE + AUTH_TAG_LENGTH,
+	});
 	const writeStream = createWriteStream(outputPath);
 
-	let isFirstChunk = true;
-	let baseIv: Buffer | null = null;
-	let chunkIndex = 0;
-	let bytesRead = 0;
-	let internalBuffer = Buffer.alloc(0);
-
-	const decryptTransform = new Transform({
-		transform(data: Buffer, _encoding, callback) {
-			if (signal?.aborted)
-				return callback(new DOMException("Operation cancelled", "AbortError"));
-
-			bytesRead += data.length;
-			if (onProgress) onProgress(bytesRead);
-
-			internalBuffer = Buffer.concat([internalBuffer, data]);
-
-			if (isFirstChunk) {
-				if (internalBuffer.length < 12) return callback(); // wait for full IV
-				baseIv = internalBuffer.subarray(0, 12);
-				internalBuffer = internalBuffer.subarray(12);
-				isFirstChunk = false;
-			}
-
-			try {
-				while (internalBuffer.length >= encChunkSize) {
-					const chunkToProcess = internalBuffer.subarray(0, encChunkSize);
-					internalBuffer = internalBuffer.subarray(encChunkSize);
-
-					if (!baseIv) throw new Error("Base IV not found");
-
-					const chunkIv = Buffer.from(baseIv);
-					const currentCounter = chunkIv.readUInt32LE(8);
-					chunkIv.writeUInt32LE((currentCounter ^ chunkIndex) >>> 0, 8);
-
-					const tag = chunkToProcess.subarray(-16);
-					const ciphertext = chunkToProcess.subarray(0, -16);
-
-					const decipher = createDecipheriv("aes-256-gcm", fileKey, chunkIv);
-					decipher.setAuthTag(tag);
-
-					const decryptedChunk = Buffer.concat([
-						decipher.update(ciphertext),
-						decipher.final(),
-					]);
-
-					this.push(decryptedChunk);
-					chunkIndex++;
-				}
-				callback();
-			} catch (err) {
-				callback(err as Error);
-			}
-		},
-		flush(callback) {
-			try {
-				if (internalBuffer.length > 0) {
-					if (!baseIv) throw new Error("Base IV not found");
-
-					const chunkIv = Buffer.from(baseIv);
-					const currentCounter = chunkIv.readUInt32LE(8);
-					chunkIv.writeUInt32LE((currentCounter ^ chunkIndex) >>> 0, 8);
-
-					const tag = internalBuffer.subarray(-16);
-					const ciphertext = internalBuffer.subarray(0, -16);
-
-					const decipher = createDecipheriv("aes-256-gcm", fileKey, chunkIv);
-					decipher.setAuthTag(tag);
-
-					const decryptedChunk = Buffer.concat([
-						decipher.update(ciphertext),
-						decipher.final(),
-					]);
-
-					this.push(decryptedChunk);
-				}
-				callback();
-			} catch (err) {
-				callback(err as Error);
-			}
-		},
-	});
-
-	await pipeline(readStream, decryptTransform, writeStream, { signal });
+	await pipeline(
+		readStream,
+		createDecryptTransform(fileKey, onProgress, signal),
+		writeStream,
+		{ signal },
+	);
 }

@@ -49,6 +49,8 @@ export interface FolderRecord {
 	parentId: string | null;
 	encName: string;
 	ivName: string;
+	encFolderKey: string;
+	ivFolderKey: string;
 	createdAt: string;
 }
 
@@ -68,6 +70,8 @@ export interface AuthUser {
 	encPrivateKey: string;
 	salt: string;
 	iv: string;
+	encRootFolderKey: string;
+	ivRootFolderKey: string;
 	email?: string;
 	name?: string;
 	createdAt?: Date | string;

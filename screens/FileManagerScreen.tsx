@@ -18,10 +18,8 @@ import { authClient } from "../lib/auth-client";
 import { COLORS } from "../lib/colors";
 import {
 	clearAuth,
-	getDecPrivateKey,
 	getDownloadDir,
-	getMasterKey,
-	getPublicKey,
+	getRootFolderKey,
 	setDownloadDir as saveDownloadDir,
 } from "../lib/config";
 import type { Mode } from "../lib/types";
@@ -40,21 +38,15 @@ export default function FileManagerScreen({ onLogout, latestVersion }: Props) {
 	const [updateDismissed, setUpdateDismissed] = useState(false);
 
 	// Keys loaded asynchronously from Bun.secrets
-	const [masterKey, setMasterKeyState] = useState("");
-	const [publicKey, setPublicKeyState] = useState("");
-	const [privateKey, setPrivateKeyState] = useState("");
+	const [rootFolderKey, setRootFolderKeyState] = useState("");
 	const [keysLoaded, setKeysLoaded] = useState(false);
 
 	useEffect(() => {
-		Promise.all([getMasterKey(), getPublicKey(), getDecPrivateKey()]).then(
-			([mk, pk, sk]) => {
-				setMasterKeyState(mk);
-				setPublicKeyState(pk);
-				setPrivateKeyState(sk);
-				setKeysLoaded(true);
-				setMode("browse");
-			},
-		);
+		Promise.all([getRootFolderKey()]).then(([rk]) => {
+			setRootFolderKeyState(rk);
+			setKeysLoaded(true);
+			setMode("browse");
+		});
 	}, []);
 
 	useEffect(() => {
@@ -72,14 +64,12 @@ export default function FileManagerScreen({ onLogout, latestVersion }: Props) {
 		}
 	}, [keysLoaded, latestVersion, updateDismissed, mode]);
 
-	const nav = useFolderNavigation(masterKey, keysLoaded);
+	const nav = useFolderNavigation(rootFolderKey, keysLoaded);
 
 	const ops = useFileOperations({
-		masterKey,
-		publicKey,
-		privateKey,
 		currentFolderId: nav.currentFolderId,
 		folderCache: nav.folderCache,
+		folderKeyCache: nav.folderKeyCache,
 		loadFolder: nav.loadFolder,
 		setStatusText: nav.setStatusText,
 		setStatusVariant: nav.setStatusVariant,

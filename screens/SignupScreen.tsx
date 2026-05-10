@@ -17,6 +17,7 @@ import {
 	setIv,
 	setMasterKey,
 	setPublicKey,
+	setRootFolderKey,
 	setSalt,
 } from "../lib/config";
 import { generateSignupKeys } from "../lib/crypto";
@@ -27,11 +28,12 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 interface Props {
 	onBack: () => void;
+	onSuccess: () => void;
 }
 
 type SignupMode = "form" | "submitting" | "verifyOtp";
 
-export default function SignupScreen({ onBack }: Props) {
+export default function SignupScreen({ onBack, onSuccess }: Props) {
 	const [mode, setMode] = useState<SignupMode>("form");
 	const [focusedIndex, setFocusedIndex] = useState(0);
 	const [email, setEmail] = useState("");
@@ -94,7 +96,7 @@ export default function SignupScreen({ onBack }: Props) {
 			const keys = await generateSignupKeys(password);
 
 			setStatus("Creating account...");
-			const { error: signUpError } = await authClient.signUp.email({
+			const { data, error: signUpError } = await authClient.signUp.email({
 				email,
 				password: keys.loginTokenHex,
 				name: name.trim(),
@@ -102,6 +104,8 @@ export default function SignupScreen({ onBack }: Props) {
 				encPrivateKey: keys.encryptedPrivateKeyHex,
 				salt: keys.saltHex,
 				iv: keys.ivHex,
+				encRootFolderKey: keys.encRootFolderKeyHex,
+				ivRootFolderKey: keys.ivRootFolderKeyHex,
 			});
 
 			if (signUpError) {
@@ -116,8 +120,17 @@ export default function SignupScreen({ onBack }: Props) {
 			await setIv(keys.ivHex);
 			await setMasterKey(toHex(keys.masterKeyBytes));
 			await setDecPrivateKey(toHex(keys.privateKey));
+			await setRootFolderKey(keys.rootFolderKeyHex);
 
-			setMode("verifyOtp");
+			if (
+				data &&
+				typeof data === "object" &&
+				("session" in data || "token" in data)
+			) {
+				onSuccess();
+			} else {
+				setMode("verifyOtp");
+			}
 		} catch (err) {
 			const msg =
 				err instanceof Error

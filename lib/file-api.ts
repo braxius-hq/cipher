@@ -59,22 +59,79 @@ export async function listItems(
 	return data;
 }
 
+export async function bulkCreateFolders(
+	folders: {
+		id: string;
+		parentId: string | null;
+		encName: string;
+		ivName: string;
+		encFolderKey: string;
+		ivFolderKey: string;
+	}[],
+) {
+	const { data, res } = await apiPost<{ success: boolean }>(
+		apiPath("/files/bulk-create-folders"),
+		{ folders },
+	);
+	if (!res.ok || !data)
+		throw new Error(extractError(data, "Failed to bulk create folders"));
+	return data.success;
+}
+
 export async function createFolder(
+	id: string,
 	parentId: string | null,
 	encName: string,
 	ivName: string,
+	encFolderKey: string,
+	ivFolderKey: string,
 ) {
 	const { data, res } = await apiPost<{ folder: FolderRecord }>(
 		apiPath("/files/create-folder"),
 		{
+			id,
 			parentId,
 			encName,
 			ivName,
+			encFolderKey,
+			ivFolderKey,
 		},
 	);
 	if (!res.ok || !data)
 		throw new Error(extractError(data, "Failed to create folder"));
 	return data.folder;
+}
+
+export async function bulkInitUpload(
+	files: { storageKey: string; totalSize: number; contentType?: string }[],
+) {
+	const { data, res } = await apiPost<{
+		uploads: { uploadUrl: string; storageKey: string }[];
+	}>(apiPath("/files/bulk-init-upload"), { files });
+	if (!res.ok || !data)
+		throw new Error(extractError(data, "Failed to bulk initialize upload"));
+	return data.uploads;
+}
+
+export async function bulkCompleteUpload(
+	files: {
+		id: string;
+		storageKey: string;
+		size: number;
+		folderId: string | null;
+		encName: string;
+		ivName: string;
+		encFileKey: string;
+		ivFileKey: string;
+	}[],
+) {
+	const { data, res } = await apiPost<{ success: boolean }>(
+		apiPath("/files/bulk-complete-upload"),
+		{ files },
+	);
+	if (!res.ok || !data)
+		throw new Error(extractError(data, "Failed to bulk complete upload"));
+	return data.success;
 }
 
 export async function initUpload(storageKey: string, totalSize: number) {
@@ -91,6 +148,7 @@ export async function initUpload(storageKey: string, totalSize: number) {
 }
 
 export async function completeUpload(params: {
+	id: string;
 	storageKey: string;
 	size: number;
 	folderId: string | null;
@@ -142,27 +200,68 @@ export async function renameItem(
 
 export async function listFolderRecursive(
 	folderId: string | null,
-	decryptName: (encName: string, ivName: string) => string,
-): Promise<FileWithPath[]> {
-	const results: FileWithPath[] = [];
+	initialFolderKey: Buffer,
+	unwrapKey: (
+		encKey: string,
+		iv: string,
+		parentKey: Buffer,
+		aad: string,
+	) => Buffer,
+	decryptName: (
+		encName: string,
+		ivName: string,
+		folderKey: Buffer,
+		aad: string,
+	) => string,
+): Promise<{ file: FileRecord; relativePath: string; folderKey: Buffer }[]> {
+	const results: {
+		file: FileRecord;
+		relativePath: string;
+		folderKey: Buffer;
+	}[] = [];
 
-	async function walk(currentFolderId: string | null, prefix: string) {
+	async function walk(
+		currentFolderId: string | null,
+		currentFolderKey: Buffer,
+		prefix: string,
+	) {
 		const { folders, files } = await listItems(currentFolderId);
 
 		for (const file of files) {
-			const fileName = decryptName(file.encName, file.ivName);
+			const fileName = decryptName(
+				file.encName,
+				file.ivName,
+				currentFolderKey,
+				file.id,
+			);
 			const relativePath = prefix ? `${prefix}/${fileName}` : fileName;
-			results.push({ file, relativePath });
+			results.push({ file, relativePath, folderKey: currentFolderKey });
 		}
 
 		for (const folder of folders) {
-			const folderName = decryptName(folder.encName, folder.ivName);
+			const folderName = decryptName(
+				folder.encName,
+				folder.ivName,
+				currentFolderKey,
+				folder.id,
+			);
+			let childFolderKey: Buffer;
+			try {
+				childFolderKey = unwrapKey(
+					folder.encFolderKey,
+					folder.ivFolderKey,
+					currentFolderKey,
+					folder.id,
+				);
+			} catch (_e) {
+				continue; // Skip folders we can't decrypt
+			}
 			const newPrefix = prefix ? `${prefix}/${folderName}` : folderName;
-			await walk(folder.id, newPrefix);
+			await walk(folder.id, childFolderKey, newPrefix);
 		}
 	}
 
-	await walk(folderId, "");
+	await walk(folderId, initialFolderKey, "");
 	return results;
 }
 

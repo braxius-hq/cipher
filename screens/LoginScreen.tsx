@@ -18,9 +18,11 @@ import {
 	setIv,
 	setMasterKey,
 	setPublicKey,
+	setRootFolderKey,
 	setSalt,
 } from "../lib/config";
 import { decryptPrivateKey, deriveLoginKeys } from "../lib/crypto";
+import { decryptFileKeyWithPrivateKey } from "../lib/file-crypto";
 import type { AuthUser } from "../lib/types";
 import { toHex } from "../lib/utils";
 
@@ -108,12 +110,19 @@ export default function LoginScreen({ onSuccess, onBack }: Props) {
 				loginKeys.masterKeyBytes,
 			);
 
+			const rootFolderKeyBytes = await decryptFileKeyWithPrivateKey(
+				user.encRootFolderKey,
+				user.publicKey,
+				toHex(decPrivateKey),
+			);
+
 			await setPublicKey(user.publicKey);
 			await setEncPrivateKey(user.encPrivateKey);
 			await setDecPrivateKey(toHex(decPrivateKey));
 			await setSalt(user.salt);
 			await setIv(user.iv);
 			await setMasterKey(toHex(loginKeys.masterKeyBytes));
+			await setRootFolderKey(toHex(rootFolderKeyBytes));
 
 			onSuccess(data.user.email || email);
 		} catch (err) {

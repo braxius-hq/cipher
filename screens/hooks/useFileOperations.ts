@@ -2,7 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, stat } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 import type { MutableRefObject } from "react";
 import { useRef, useState } from "react";
 import {
@@ -18,11 +18,9 @@ import { formatBytes, formatProgressBar } from "../../lib/formatting";
 import type { DirectoryEntry, DisplayItem } from "../../lib/types";
 
 interface UseFileOperationsInput {
-	masterKey: string;
-	publicKey: string;
-	privateKey: string;
 	currentFolderId: string | null;
 	folderCache: MutableRefObject<Map<string, DisplayItem[]>>;
+	folderKeyCache: MutableRefObject<Map<string, Buffer>>;
 	loadFolder: (folderId: string | null) => Promise<void>;
 	setStatusText: (t: string) => void;
 	setStatusVariant: (v: "success" | "error") => void;
@@ -86,11 +84,9 @@ async function walkDirectory(
 }
 
 export function useFileOperations({
-	masterKey,
-	publicKey,
-	privateKey,
 	currentFolderId,
 	folderCache,
+	folderKeyCache,
 	loadFolder,
 	setStatusText,
 	setStatusVariant,
@@ -110,15 +106,23 @@ export function useFileOperations({
 		onEncryptProgress?: (bytes: number, total: number) => void,
 		onUploadProgress?: (bytes: number, total: number) => void,
 	): Promise<number> => {
+		const targetFolderKey = folderKeyCache.current.get(
+			targetFolderId || "__root__",
+		);
+		if (!targetFolderKey) throw new Error("Target folder key not found");
+
+		const fileId = randomUUID();
 		const fileKey = crypto.generateFileKey();
 		const baseIv = crypto.getBaseIv();
 		const { encName, ivName } = crypto.encryptMetadata(
 			basename(localPath),
-			masterKey,
+			targetFolderKey,
+			fileId,
 		);
-		const encFileKeyHex = await crypto.encryptFileKeyWithPublicKey(
+		const { encKeyHex: encFileKeyHex, ivHex: ivFileKey } = crypto.wrapKey(
 			fileKey,
-			publicKey,
+			targetFolderKey,
+			fileId,
 		);
 
 		const fileStats = await stat(localPath);
@@ -163,13 +167,14 @@ export function useFileOperations({
 
 		try {
 			await api.completeUpload({
+				id: fileId,
 				storageKey,
 				size: totalSize,
 				folderId: targetFolderId,
 				encName,
 				ivName,
 				encFileKey: encFileKeyHex,
-				ivFileKey: baseIv.toString("hex"),
+				ivFileKey,
 			});
 		} catch (err) {
 			throw new Error(
@@ -193,36 +198,88 @@ export function useFileOperations({
 			const { dirs, files } = await walkDirectory(dirPath);
 			const totalFiles = files.length;
 
-			const folderIdMap = new Map<string, string | null>();
+			const folderIdMap = new Map<string, string>();
+			const foldersToCreate: {
+				id: string;
+				parentId: string | null;
+				encName: string;
+				ivName: string;
+				encFolderKey: string;
+				ivFolderKey: string;
+			}[] = [];
+
 			setPhaseText("Creating folders...");
 			setProgressText(basename(dirPath));
 
-			const { encName, ivName } = crypto.encryptMetadata(
-				basename(dirPath),
-				masterKey,
+			const currentFolderKey = folderKeyCache.current.get(
+				currentFolderId || "__root__",
 			);
-			const rootFolder = await api.createFolder(
-				currentFolderId,
-				encName,
-				ivName,
-			);
-			folderIdMap.set("", rootFolder.id);
+			if (!currentFolderKey) throw new Error("Current folder key not found");
+
+			const rootFolderId = randomUUID();
+			const rootDirKey = crypto.generateFolderKey();
+			const { encName: rootEncName, ivName: rootIvName } =
+				crypto.encryptMetadata(
+					basename(dirPath),
+					currentFolderKey,
+					rootFolderId,
+				);
+			const { encKeyHex: encRootFolderKey, ivHex: ivRootFolderKey } =
+				crypto.wrapKey(rootDirKey, currentFolderKey, rootFolderId);
+
+			foldersToCreate.push({
+				id: rootFolderId,
+				parentId: currentFolderId,
+				encName: rootEncName,
+				ivName: rootIvName,
+				encFolderKey: encRootFolderKey,
+				ivFolderKey: ivRootFolderKey,
+			});
+			folderIdMap.set("", rootFolderId);
+			folderKeyCache.current.set(rootFolderId, rootDirKey);
 
 			for (const dir of dirs) {
 				const parentPath = dir.includes("/")
 					? dir.slice(0, dir.lastIndexOf("/"))
 					: "";
-				const parentId = folderIdMap.get(parentPath) ?? rootFolder.id;
+				const parentId = folderIdMap.get(parentPath) ?? rootFolderId;
+				const parentKey = folderKeyCache.current.get(parentId);
+				if (!parentKey) throw new Error("Parent folder key not found");
+
 				const dirName = dir.includes("/")
 					? dir.slice(dir.lastIndexOf("/") + 1)
 					: dir;
 
-				setPhaseText("Creating folders...");
-				setProgressText(dir);
+				const folderId = randomUUID();
+				const dirKey = crypto.generateFolderKey();
+				const { encName, ivName } = crypto.encryptMetadata(
+					dirName,
+					parentKey,
+					folderId,
+				);
+				const { encKeyHex: encFolderKey, ivHex: ivFolderKey } = crypto.wrapKey(
+					dirKey,
+					parentKey,
+					folderId,
+				);
 
-				const { encName, ivName } = crypto.encryptMetadata(dirName, masterKey);
-				const folder = await api.createFolder(parentId, encName, ivName);
-				folderIdMap.set(dir, folder.id);
+				foldersToCreate.push({
+					id: folderId,
+					parentId,
+					encName,
+					ivName,
+					encFolderKey,
+					ivFolderKey,
+				});
+				folderIdMap.set(dir, folderId);
+				folderKeyCache.current.set(folderId, dirKey);
+			}
+
+			if (foldersToCreate.length > 0) {
+				// Chunk if needed, but the backend accepts up to 2000 folders in one go
+				for (let i = 0; i < foldersToCreate.length; i += 1000) {
+					await api.bulkCreateFolders(foldersToCreate.slice(i, i + 1000));
+				}
 			}
 
 			if (totalFiles === 0) {
@@ -238,9 +295,85 @@ export function useFileOperations({
 			);
 			const totalRawBytes = fileSizes.reduce((a, b) => a + b, 0);
 
-			const CONCURRENCY = 10;
-			const queue = files.map((f, i) => ({ file: f, index: i }));
+			setPhaseText("Preparing files...");
+			setProgressText("");
+
+			const preparedFiles = files.map((f, i) => {
+				const rawSize = fileSizes[i] ?? 0;
+				const totalSize = crypto.getEncryptedFileSize(rawSize);
+				const parentPath = f.relativePath.includes("/")
+					? f.relativePath.slice(0, f.relativePath.lastIndexOf("/"))
+					: "";
+				const targetFolderId = folderIdMap.get(parentPath) ?? rootFolderId;
+				const targetFolderKey = folderKeyCache.current.get(
+					targetFolderId || "__root__",
+				);
+				if (!targetFolderKey) throw new Error("Target folder key not found");
+
+				const fileId = randomUUID();
+				const fileKey = crypto.generateFileKey();
+				const baseIv = crypto.getBaseIv();
+				const { encName, ivName } = crypto.encryptMetadata(
+					basename(f.fullPath),
+					targetFolderKey,
+					fileId,
+				);
+				const { encKeyHex: encFileKeyHex, ivHex: ivFileKey } = crypto.wrapKey(
+					fileKey,
+					targetFolderKey,
+					fileId,
+				);
+				return {
+					file: f,
+					rawSize,
+					totalSize,
+					targetFolderId,
+					fileId,
+					fileKey,
+					baseIv,
+					encName,
+					ivName,
+					encFileKeyHex,
+					ivFileKey,
+					storageKey: `files/${randomUUID()}`,
+					uploadUrl: "",
+				};
+			});
+
+			setPhaseText("Initializing uploads...");
+			let allUploads: { uploadUrl: string; storageKey: string }[] = [];
+			for (let i = 0; i < preparedFiles.length; i += 1000) {
+				const chunk = preparedFiles.slice(i, i + 1000);
+				const chunkUploads = await api.bulkInitUpload(
+					chunk.map((pf) => ({
+						storageKey: pf.storageKey,
+						totalSize: pf.totalSize,
+					})),
+				);
+				allUploads = allUploads.concat(chunkUploads);
+			}
+
+			for (let i = 0; i < preparedFiles.length; i++) {
+				const pf = preparedFiles[i];
+				const ul = allUploads[i];
+				if (pf && ul) {
+					pf.uploadUrl = ul.uploadUrl;
+				}
+			}
+
+			const CONCURRENCY = 50;
+			const queue = [...preparedFiles];
 			let completedCount = 0;
+			const successfulRecords: {
+				id: string;
+				storageKey: string;
+				size: number;
+				folderId: string | null;
+				encName: string;
+				ivName: string;
+				encFileKey: string;
+				ivFileKey: string;
+			}[] = [];
 			const failed: { path: string; error: string }[] = [];
 
 			if (process.stdin.isTTY) {
@@ -256,18 +389,37 @@ export function useFileOperations({
 					const task = queue.shift();
 					if (!task) return;
 
-					const { file } = task;
-					const parentPath = file.relativePath.includes("/")
-						? file.relativePath.slice(0, file.relativePath.lastIndexOf("/"))
-						: "";
-					const targetFolderId = folderIdMap.get(parentPath) ?? rootFolder.id;
-
 					try {
-						await uploadSingleFile(file.fullPath, targetFolderId, signal);
+						const encryptedStream = crypto.createEncryptedFileStream(
+							task.file.fullPath,
+							task.fileKey,
+							task.baseIv,
+							undefined,
+							signal,
+						);
+
+						await api.uploadStreamToUrl(
+							task.uploadUrl,
+							encryptedStream,
+							task.totalSize,
+							undefined,
+							signal,
+						);
+
+						successfulRecords.push({
+							id: task.fileId,
+							storageKey: task.storageKey,
+							size: task.totalSize,
+							folderId: task.targetFolderId,
+							encName: task.encName,
+							ivName: task.ivName,
+							encFileKey: task.encFileKeyHex,
+							ivFileKey: task.ivFileKey,
+						});
 						completedCount++;
 					} catch (err) {
 						failed.push({
-							path: file.relativePath,
+							path: task.file.relativePath,
 							error: err instanceof Error ? err.message : "unknown error",
 						});
 					}
@@ -298,6 +450,13 @@ export function useFileOperations({
 				throw err;
 			}
 
+			if (successfulRecords.length > 0) {
+				setPhaseText("Completing uploads...");
+				for (let i = 0; i < successfulRecords.length; i += 1000) {
+					await api.bulkCompleteUpload(successfulRecords.slice(i, i + 1000));
+				}
+			}
+
 			folderCache.current.delete(currentFolderId ?? "__root__");
 			await loadFolder(currentFolderId);
 
@@ -307,9 +466,12 @@ export function useFileOperations({
 				);
 				setStatusVariant("success");
 			} else {
-				const failedPaths = failed.map((f) => f.path).join(", ");
+				const errorSummary = failed
+					.slice(0, 2)
+					.map((f) => `${f.path}: ${f.error}`)
+					.join("; ");
 				setStatusText(
-					`Uploaded ${completedCount}/${totalFiles} files. Failed: ${failedPaths}`,
+					`Uploaded ${completedCount}/${totalFiles} files. Errors: ${errorSummary}${failed.length > 2 ? " ..." : ""}`,
 				);
 				setStatusVariant("error");
 			}
@@ -413,6 +575,15 @@ export function useFileOperations({
 			await mkdir(downloadsDir, { recursive: true });
 			const outputPath = join(downloadsDir, plainName);
 
+			const resolvedDownloadsDir = resolve(downloadsDir);
+			const resolvedOutputPath = resolve(outputPath);
+			if (
+				!resolvedOutputPath.startsWith(resolvedDownloadsDir + sep) &&
+				resolvedOutputPath !== resolvedDownloadsDir
+			) {
+				throw new Error("Invalid filename (path traversal detected)");
+			}
+
 			const uuid = randomUUID();
 			partPath = createPartialDownloadPath(downloadsDir, uuid);
 			registerSensitivePath(partPath);
@@ -423,10 +594,17 @@ export function useFileOperations({
 
 			setPhaseText("Decrypting key...");
 			setProgressText("");
-			const fileKey = await crypto.decryptFileKeyWithPrivateKey(
+
+			const currentFolderKey = folderKeyCache.current.get(
+				currentFolderId || "__root__",
+			);
+			if (!currentFolderKey) throw new Error("Current folder key not found");
+
+			const fileKey = crypto.unwrapKey(
 				file.encFileKey,
-				publicKey,
-				privateKey,
+				file.ivFileKey,
+				currentFolderKey,
+				fileId,
 			);
 
 			setPhaseText("Downloading and decrypting...");
@@ -491,9 +669,17 @@ export function useFileOperations({
 
 			await mkdir(downloadsDir, { recursive: true });
 
+			const currentFolderKey = folderKeyCache.current.get(
+				folderId || "__root__",
+			);
+			if (!currentFolderKey)
+				throw new Error("Folder key not found for download");
+
 			const filesWithPaths = await api.listFolderRecursive(
 				folderId,
-				(encName, ivName) => crypto.decryptMetadata(encName, ivName, masterKey),
+				currentFolderKey,
+				crypto.unwrapKey,
+				crypto.decryptMetadata,
 			);
 			const totalFiles = filesWithPaths.length;
 
@@ -510,11 +696,23 @@ export function useFileOperations({
 			async function downloadFile({
 				file,
 				relativePath,
+				folderKey,
 			}: {
-				file: api.FileWithPath["file"];
+				file: api.FileRecord;
 				relativePath: string;
+				folderKey: Buffer;
 			}) {
 				const outputPath = join(downloadsDir, relativePath);
+
+				const resolvedDownloadsDir = resolve(downloadsDir);
+				const resolvedOutputPath = resolve(outputPath);
+				if (
+					!resolvedOutputPath.startsWith(resolvedDownloadsDir + sep) &&
+					resolvedOutputPath !== resolvedDownloadsDir
+				) {
+					throw new Error("Invalid path (path traversal detected)");
+				}
+
 				const lastSep = relativePath.lastIndexOf("/");
 				const outputDir =
 					lastSep > -1
@@ -532,10 +730,11 @@ export function useFileOperations({
 				try {
 					const { url, file: fileInfo } = await api.getDownloadUrl(file.id);
 					const encryptedStream = await api.downloadStreamFromUrl(url, signal);
-					const fileKey = await crypto.decryptFileKeyWithPrivateKey(
+					const fileKey = crypto.unwrapKey(
 						fileInfo.encFileKey,
-						publicKey,
-						privateKey,
+						fileInfo.ivFileKey,
+						folderKey,
+						fileInfo.id,
 					);
 
 					setPhaseText("Downloading and decrypting...");
@@ -647,11 +846,31 @@ export function useFileOperations({
 		setStatusText("");
 
 		try {
+			const currentFolderKey = folderKeyCache.current.get(
+				currentFolderId || "__root__",
+			);
+			if (!currentFolderKey) throw new Error("Current folder key not found");
+
+			const newFolderId = randomUUID();
+			const newFolderKey = crypto.generateFolderKey();
 			const { encName, ivName } = crypto.encryptMetadata(
 				folderName.trim(),
-				masterKey,
+				currentFolderKey,
+				newFolderId,
 			);
-			await api.createFolder(currentFolderId, encName, ivName);
+			const { encKeyHex: encFolderKey, ivHex: ivFolderKey } = crypto.wrapKey(
+				newFolderKey,
+				currentFolderKey,
+				newFolderId,
+			);
+			await api.createFolder(
+				newFolderId,
+				currentFolderId,
+				encName,
+				ivName,
+				encFolderKey,
+				ivFolderKey,
+			);
 			folderCache.current.delete(currentFolderId ?? "__root__");
 			await loadFolder(currentFolderId);
 			setStatusText(`Created folder '${folderName.trim()}'`);
@@ -683,9 +902,15 @@ export function useFileOperations({
 		setStatusText("");
 
 		try {
+			const currentFolderKey = folderKeyCache.current.get(
+				currentFolderId || "__root__",
+			);
+			if (!currentFolderKey) throw new Error("Current folder key not found");
+
 			const { encName, ivName } = crypto.encryptMetadata(
 				newName.trim(),
-				masterKey,
+				currentFolderKey,
+				item.id,
 			);
 			await api.renameItem(
 				item.id,

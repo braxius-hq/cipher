@@ -38,6 +38,13 @@ export async function generateSignupKeys(password: string) {
 			keypair.privateKey.slice().buffer as ArrayBuffer,
 		),
 	);
+
+	const rootFolderKey = crypto.getRandomValues(new Uint8Array(32));
+	const encRootFolderKey = sodium.crypto_box_seal(
+		rootFolderKey,
+		keypair.publicKey,
+	);
+
 	return {
 		loginTokenHex: toHex(loginTokenBytes),
 		saltHex: toHex(salt),
@@ -46,6 +53,9 @@ export async function generateSignupKeys(password: string) {
 		ivHex: toHex(iv),
 		masterKeyBytes: masterKeyBytes,
 		privateKey: keypair.privateKey,
+		encRootFolderKeyHex: toHex(encRootFolderKey),
+		ivRootFolderKeyHex: "",
+		rootFolderKeyHex: toHex(rootFolderKey),
 	};
 }
 

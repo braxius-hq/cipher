@@ -20,6 +20,8 @@ export const authClient = createAuthClient({
 				encPrivateKey: { type: "string", required: true },
 				salt: { type: "string", required: true },
 				iv: { type: "string", required: true },
+				encRootFolderKey: { type: "string", required: true },
+				ivRootFolderKey: { type: "string", required: true },
 			},
 		}),
 		emailOTPClient(),

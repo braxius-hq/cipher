@@ -33,7 +33,10 @@ function sortItems(
 	return parent ? [parent, ...sorted] : sorted;
 }
 
-export function useFolderNavigation(masterKey: string, keysLoaded = true) {
+export function useFolderNavigation(
+	rootFolderKeyHex: string,
+	keysLoaded = true,
+) {
 	const [items, setItems] = useState<DisplayItem[]>([]);
 	const [selectedIndex, setSelectedIndex] = useState(0);
 	const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
@@ -62,6 +65,16 @@ export function useFolderNavigation(masterKey: string, keysLoaded = true) {
 	}, [stdout]);
 
 	const folderCache = useRef<Map<string, DisplayItem[]>>(new Map());
+	const folderKeyCache = useRef<Map<string, Buffer>>(new Map());
+
+	useEffect(() => {
+		if (rootFolderKeyHex) {
+			folderKeyCache.current.set(
+				"__root__",
+				Buffer.from(rootFolderKeyHex, "hex"),
+			);
+		}
+	}, [rootFolderKeyHex]);
 
 	const displayItems = useCallback(() => {
 		return sortItems(items, sortKey, sortDir);
@@ -117,10 +130,17 @@ export function useFolderNavigation(masterKey: string, keysLoaded = true) {
 
 	const loadFolder = useCallback(
 		async (folderId: string | null) => {
-			if (!masterKey) return;
+			if (!rootFolderKeyHex) return;
 
 			const cacheKey = folderId || "__root__";
 			const cached = folderCache.current.get(cacheKey);
+			const currentFolderKey = folderKeyCache.current.get(cacheKey);
+
+			if (!currentFolderKey) {
+				setStatusText("Missing folder key. Return to root and try again.");
+				setStatusVariant("error");
+				return;
+			}
 
 			if (cached) {
 				setItems(cached);
@@ -149,7 +169,24 @@ export function useFolderNavigation(masterKey: string, keysLoaded = true) {
 				}
 
 				for (const f of folders) {
-					const name = crypto.decryptMetadata(f.encName, f.ivName, masterKey);
+					const name = crypto.decryptMetadata(
+						f.encName,
+						f.ivName,
+						currentFolderKey,
+						f.id,
+					);
+					try {
+						const childKey = crypto.unwrapKey(
+							f.encFolderKey,
+							f.ivFolderKey,
+							currentFolderKey,
+							f.id,
+						);
+						folderKeyCache.current.set(f.id, childKey);
+					} catch (_e) {
+						// Ignored: could not unwrap child folder key, it will throw when entering
+					}
+
 					displayItems.push({
 						id: f.id,
 						type: "folder",
@@ -159,7 +196,12 @@ export function useFolderNavigation(masterKey: string, keysLoaded = true) {
 				}
 
 				for (const f of files) {
-					const name = crypto.decryptMetadata(f.encName, f.ivName, masterKey);
+					const name = crypto.decryptMetadata(
+						f.encName,
+						f.ivName,
+						currentFolderKey,
+						f.id,
+					);
 					displayItems.push({
 						id: f.id,
 						type: "file",
@@ -184,7 +226,7 @@ export function useFolderNavigation(masterKey: string, keysLoaded = true) {
 				setIsLoading(false);
 			}
 		},
-		[masterKey],
+		[rootFolderKeyHex],
 	);
 
 	const goBack = useCallback(() => {
@@ -238,10 +280,10 @@ export function useFolderNavigation(masterKey: string, keysLoaded = true) {
 
 	// Only load root folder once keys are available
 	useEffect(() => {
-		if (keysLoaded && masterKey) {
+		if (keysLoaded && rootFolderKeyHex) {
 			loadFolder(null);
 		}
-	}, [keysLoaded, masterKey, loadFolder]);
+	}, [keysLoaded, rootFolderKeyHex, loadFolder]);
 
 	const breadcrumb = ["Cipher", ...folderNameHistory].join(" / ");
 
@@ -259,6 +301,7 @@ export function useFolderNavigation(masterKey: string, keysLoaded = true) {
 		setStatusVariant,
 		isLoading,
 		folderCache,
+		folderKeyCache,
 		loadFolder,
 		goBack,
 		refreshFolder,

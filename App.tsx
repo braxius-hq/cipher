@@ -73,7 +73,10 @@ export default function App() {
 				/>
 			)}
 			{screen === "signup" && (
-				<SignupScreen onBack={() => setScreen("welcome")} />
+				<SignupScreen
+					onSuccess={() => setScreen("status")}
+					onBack={() => setScreen("welcome")}
+				/>
 			)}
 			{screen === "status" && (
 				<FileManagerScreen
