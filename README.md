@@ -2,6 +2,10 @@
 
 **The encrypted cloud storage from your terminal.**
 
+<img width="1920" height="929" alt="Screenshot From 2026-05-06 17-25-29" src="https://github.com/user-attachments/assets/95fc0356-6332-4f4d-b48b-ebb2d3528829" />
+<img width="1920" height="976" alt="cipher" src="https://github.com/user-attachments/assets/eb918d16-ee9e-4d2f-b9aa-027a5e32c430" />
+
+
 ![License](https://img.shields.io/badge/License-AGPL_3.0-blue.svg)
 
 Cipher is an interactive terminal client for secure cloud storage, built with [Ink](https://github.com/vadimdemedes/ink) and [Bun](https://bun.sh). All encryption happens locally on your machine — the server never sees your data or filenames.
